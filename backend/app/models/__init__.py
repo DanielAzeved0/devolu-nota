@@ -1,0 +1,31 @@
+from app.models.domain import (
+    AuditLog,
+    Company,
+    CompanyUser,
+    EmissionBatch,
+    EmissionJob,
+    FiscalDocument,
+    Integration,
+    MarketplaceAccount,
+    RetentionJob,
+    ReturnNote,
+    ReturnOrder,
+    StorageArchive,
+    User,
+)
+
+__all__ = [
+    "AuditLog",
+    "Company",
+    "CompanyUser",
+    "EmissionBatch",
+    "EmissionJob",
+    "FiscalDocument",
+    "Integration",
+    "MarketplaceAccount",
+    "RetentionJob",
+    "ReturnNote",
+    "ReturnOrder",
+    "StorageArchive",
+    "User",
+]

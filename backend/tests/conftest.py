@@ -1,0 +1,22 @@
+import os
+
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("APP_NAME", "Notas de Devolucao SaaS")
+os.environ.setdefault("API_V1_PREFIX", "/api/v1")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://app:app@localhost:5432/notas_devolucao")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
+os.environ.setdefault("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15")
+os.environ.setdefault("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7")
+os.environ.setdefault("ENCRYPTION_KEY", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
+os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
+os.environ.setdefault("TINY_API_BASE_URL", "https://api.tiny.com.br")
+os.environ.setdefault("MERCADO_LIVRE_CLIENT_ID", "test")
+os.environ.setdefault("MERCADO_LIVRE_CLIENT_SECRET", "test")
+os.environ.setdefault("SHOPEE_CLIENT_ID", "test")
+os.environ.setdefault("SHOPEE_CLIENT_SECRET", "test")
+os.environ.setdefault("STORAGE_ENDPOINT_URL", "http://localhost:9000")
+os.environ.setdefault("STORAGE_BUCKET_NAME", "test")
+os.environ.setdefault("STORAGE_ACCESS_KEY", "test")
+os.environ.setdefault("STORAGE_SECRET_KEY", "test")
+
