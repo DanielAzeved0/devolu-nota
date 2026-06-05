@@ -24,6 +24,12 @@ O runtime atual inclui:
 - hash de senha com bcrypt;
 - criptografia autenticada de credenciais sensiveis com AES-GCM;
 - rotas multi-tenant para empresas, usuarios vinculados e integracoes;
+- mocks isolados para Tiny, Mercado Livre e Shopee;
+- sincronizacao mockada de devolucoes de marketplace;
+- criacao mockada de nota fiscal de entrada de devolucao;
+- lotes e jobs de emissao mockada;
+- historico operacional em `audit_logs`;
+- frontend autenticado minimo para operar o fluxo mockado;
 - sanitizacao de erros de validacao para nao vazar payload sensivel;
 - testes reais contra API e PostgreSQL local;
 - Docker Compose para ambiente local completo.
@@ -35,8 +41,7 @@ Nao existe, nesta etapa:
 - integracao real com Tiny, Mercado Livre ou Shopee;
 - emissao real de NF-e;
 - regra fiscal definitiva;
-- frontend autenticado completo;
-- mocks de marketplaces ou ERP.
+- frontend completo de producao.
 
 ## Principais Funcionalidades
 
@@ -48,6 +53,12 @@ Nao existe, nesta etapa:
 - **Integracoes por empresa**: cadastro, listagem, consulta e atualizacao de integracoes por `company_id`.
 - **Credenciais criptografadas**: `access_token`, `refresh_token`, `api_token` e `client_secret` sao armazenados em `encrypted_credentials`.
 - **Settings nao sensiveis**: `settings` rejeita campos sensiveis para evitar token em texto puro.
+- **Mocks de integracao**: clients mockados de Tiny, Mercado Livre e Shopee validam fluxos antes das integracoes reais.
+- **Sincronizacao mockada de devolucoes**: devolucoes de marketplace sao persistidas com idempotencia por empresa, marketplace e pedido externo.
+- **Criacao mockada de nota de entrada**: o backend cruza devolucao com NF-e original simulada no Tiny e cria `return_notes` em `DRAFT`.
+- **Emissao mockada em lote**: o backend cria `emission_batches`, cria `emission_jobs`, move notas para `QUEUED` e processa cenarios mockados de sucesso ou falha.
+- **Historico operacional**: eventos de emissao mockada sao registrados em `audit_logs` e expostos por rota multi-tenant.
+- **Frontend autenticado minimo**: login, cadastro, empresas, conexoes, devolucoes, emissoes e historico consomem a API existente.
 - **Erros 422 sanitizados**: payloads invalidos nao retornam `input` nem valores sensiveis.
 - **Alembic versionado**: schema relacional criado e evoluido por migrations.
 - **Testes de contrato e seguranca**: cobrem autenticacao, tenant boundary, criptografia, rotas e metadata dos models.
@@ -81,7 +92,14 @@ flowchart TD
 7. Usuario vincula outros usuarios existentes a empresa.
 8. Usuario cria integracao em `POST /api/v1/companies/{company_id}/integrations`.
 9. Se houver credenciais, backend criptografa antes de persistir.
-10. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
+10. Usuario sincroniza devolucoes mockadas em `POST /api/v1/companies/{company_id}/return-orders/mock-sync`.
+11. Backend persiste devolucoes com isolamento por empresa e idempotencia.
+12. Usuario cria nota de entrada mockada em `POST /api/v1/companies/{company_id}/return-orders/{return_order_id}/return-notes/mock`.
+13. Backend busca a NF-e original simulada no Tiny mock, cria `return_notes` em `DRAFT` e vincula o pedido a `LINKED_TO_NFE`.
+14. Usuario cria lote de emissao mockada em `POST /api/v1/companies/{company_id}/emission-batches/mock`.
+15. Backend cria um job por nota, move as notas para `QUEUED` e permite processamento mockado via service/task Celery.
+16. Backend registra eventos operacionais em `audit_logs`.
+17. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
 
 ## API
 
@@ -386,6 +404,256 @@ Campos proibidos na resposta:
 - `api_token`
 - `client_secret`
 
+### Devolucoes Mockadas
+
+As rotas de devolucoes mockadas sao multi-tenant, exigem access token e existem para validar o fluxo antes de integrar com APIs reais.
+
+#### Sincronizar devolucoes mockadas
+
+```http
+POST /api/v1/companies/{company_id}/return-orders/mock-sync
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+```json
+{
+  "marketplace": "MERCADO_LIVRE",
+  "scenario": "success"
+}
+```
+
+Marketplaces aceitos:
+
+- `MERCADO_LIVRE`
+- `SHOPEE`
+
+Scenarios aceitos:
+
+- `success`
+- `invalid_token`
+- `timeout`
+- `external_error`
+
+Resposta de sucesso:
+
+```json
+{
+  "company_id": "uuid",
+  "marketplace": "MERCADO_LIVRE",
+  "created": 1,
+  "updated": 0,
+  "skipped": 0,
+  "items": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "marketplace": "MERCADO_LIVRE",
+      "external_order_id": "ML-RETURN-1001",
+      "status": "OPEN",
+      "original_nfe_key": null,
+      "payload": {
+        "status": "RETURNED"
+      },
+      "created_at": "2026-06-04T00:00:00",
+      "updated_at": "2026-06-04T00:00:00"
+    }
+  ]
+}
+```
+
+O sync e idempotente por `company_id`, `marketplace` e `external_order_id`. Se uma devolucao existente ja tiver `original_nfe_key`, a chave nao e sobrescrita pelo mock.
+
+#### Criar nota de entrada mockada
+
+```http
+POST /api/v1/companies/{company_id}/return-orders/{return_order_id}/return-notes/mock
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+```json
+{
+  "scenario": "success"
+}
+```
+
+Resposta de sucesso:
+
+```json
+{
+  "id": "uuid",
+  "company_id": "uuid",
+  "return_order_id": "uuid",
+  "status": "DRAFT",
+  "original_nfe_key": "35260612345678000199550010000010011000010010",
+  "return_nfe_key": null,
+  "number": null,
+  "series": null,
+  "issued_at": null,
+  "error_message": null,
+  "created_at": "2026-06-04T00:00:00",
+  "updated_at": "2026-06-04T00:00:00"
+}
+```
+
+A criacao mockada rejeita nota ativa duplicada para o mesmo pedido e atualiza o pedido de devolucao para `LINKED_TO_NFE`.
+
+Erros controlados de provedor retornam `detail.code`, `detail.provider`, `detail.message` e `detail.retryable`, sem credenciais ou tokens.
+
+ATENCAO: a montagem fiscal definitiva da nota de entrada precisa ser validada com contador ou especialista fiscal antes de uso em producao.
+
+### Emissao Mockada em Lote
+
+As rotas de emissao mockada validam o ciclo operacional de lote e jobs antes de qualquer emissao fiscal real.
+
+#### Criar lote de emissao mockada
+
+```http
+POST /api/v1/companies/{company_id}/emission-batches/mock
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+```json
+{
+  "return_note_ids": ["uuid-da-nota"],
+  "scenario": "success"
+}
+```
+
+Scenarios aceitos:
+
+- `success`
+- `partial_failure`
+- `failure`
+
+Regras principais:
+
+- notas devem pertencer a empresa do usuario;
+- notas devem estar em `DRAFT` ou `READY_TO_EMIT`;
+- notas duplicadas na mesma requisicao sao rejeitadas;
+- notas em lote ativo ou status nao elegivel sao rejeitadas;
+- ao criar o lote, as notas entram em `QUEUED`;
+- cada nota gera exatamente um `emission_job`.
+
+Resposta de sucesso:
+
+```json
+{
+  "id": "uuid",
+  "company_id": "uuid",
+  "requested_by_user_id": "uuid",
+  "status": "PENDING",
+  "started_at": null,
+  "finished_at": null,
+  "created_at": "2026-06-04T00:00:00",
+  "updated_at": "2026-06-04T00:00:00",
+  "jobs": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "batch_id": "uuid",
+      "return_note_id": "uuid",
+      "status": "PENDING",
+      "attempts": 0,
+      "scheduled_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "last_error": null,
+      "created_at": "2026-06-04T00:00:00",
+      "updated_at": "2026-06-04T00:00:00"
+    }
+  ]
+}
+```
+
+#### Consultar lote
+
+```http
+GET /api/v1/companies/{company_id}/emission-batches/{batch_id}
+Authorization: Bearer <access_token>
+```
+
+#### Listar jobs do lote
+
+```http
+GET /api/v1/companies/{company_id}/emission-batches/{batch_id}/jobs
+Authorization: Bearer <access_token>
+```
+
+#### Processamento mockado
+
+O processamento e implementado em service isolado e exposto por wrapper Celery `emissions.process_mock_batch`.
+
+Efeitos por scenario:
+
+- `success`: lote `COMPLETED`, jobs `SUCCESS`, notas `ISSUED`, `return_nfe_key` mockada e `issued_at` preenchido.
+- `failure`: lote `FAILED`, jobs `FAILED`, notas `FAILED` e mensagens de erro controladas.
+- `partial_failure`: lote `FAILED`, mistura de jobs `SUCCESS` e `FAILED`.
+
+Esta etapa nao emite NF-e real, nao chama Tiny real, nao chama SEFAZ e nao gera XML/DANFE real.
+
+### Historico Operacional
+
+Eventos relevantes da emissao mockada sao persistidos em `audit_logs` para rastreabilidade por empresa.
+
+#### Listar audit logs da empresa
+
+```http
+GET /api/v1/companies/{company_id}/audit-logs
+Authorization: Bearer <access_token>
+```
+
+Filtros opcionais:
+
+- `entity_type`
+- `entity_id`
+- `action`
+- `created_from`
+- `created_to`
+- `limit`, default `50`, maximo `100`
+- `offset`, default `0`
+
+Resposta:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "user_id": "uuid",
+      "action": "EMISSION_BATCH_CREATED",
+      "entity_type": "emission_batch",
+      "entity_id": "uuid",
+      "metadata": {
+        "status": "PENDING"
+      },
+      "created_at": "2026-06-04T00:00:00"
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Eventos registrados:
+
+- `EMISSION_BATCH_CREATED`
+- `EMISSION_JOB_CREATED`
+- `RETURN_NOTE_QUEUED`
+- `EMISSION_BATCH_STARTED`
+- `EMISSION_JOB_STARTED`
+- `EMISSION_JOB_SUCCEEDED`
+- `EMISSION_JOB_FAILED`
+- `RETURN_NOTE_ISSUED`
+- `RETURN_NOTE_FAILED`
+- `EMISSION_BATCH_COMPLETED`
+- `EMISSION_BATCH_FAILED`
+
+Logs iniciados por rota autenticada preservam `user_id`. Logs do processamento assincrono podem ter `user_id` nulo. Metadata com chaves sensiveis como `access_token`, `refresh_token`, `api_token`, `client_secret`, `encrypted_credentials`, `password`, `password_hash` ou `secret` e rejeitada.
+
 ## Modelo de Dados
 
 Tabelas principais ja modeladas:
@@ -442,12 +710,45 @@ O frontend fica em `frontend/` e usa Next.js.
 
 Arquivos principais atuais:
 
-- `frontend/app/page.tsx`: tela operacional inicial;
+- `frontend/app/login/page.tsx`: login;
+- `frontend/app/register/page.tsx`: cadastro;
+- `frontend/app/(protected)/app/page.tsx`: dashboard protegido;
+- `frontend/app/(protected)/app/companies/page.tsx`: empresas e selecao de empresa ativa;
+- `frontend/app/(protected)/app/integrations/page.tsx`: conexoes mockadas;
+- `frontend/app/(protected)/app/returns/page.tsx`: sincronizacao de devolucoes e criacao de nota mockada;
+- `frontend/app/(protected)/app/emissions/page.tsx`: criacao de lote de emissao mockada;
+- `frontend/app/(protected)/app/audit-logs/page.tsx`: historico operacional;
 - `frontend/app/layout.tsx`: layout base;
 - `frontend/app/globals.css`: estilos globais;
 - `frontend/components/api-health-badge.tsx`: status da API.
+- `frontend/components/auth-provider.tsx`: sessao local do MVP;
+- `frontend/components/protected-layout.tsx`: layout protegido e navegacao;
+- `frontend/services/api.ts`: client HTTP tipado.
 
-O frontend atual e uma tela inicial operacional. Ele ainda nao implementa fluxo completo de login, cadastro de empresa ou integracoes.
+O frontend atual permite operar o MVP mockado com `access_token` salvo no navegador. Esta decisao e pragmatica para desenvolvimento local; em producao, a sessao deve ser revisada para uma estrategia mais robusta.
+
+Rotas do frontend:
+
+```text
+http://localhost:3000/login
+http://localhost:3000/register
+http://localhost:3000/app
+http://localhost:3000/app/companies
+http://localhost:3000/app/integrations
+http://localhost:3000/app/returns
+http://localhost:3000/app/emissions
+http://localhost:3000/app/audit-logs
+```
+
+Fluxo manual recomendado:
+
+1. Criar conta em `/register`.
+2. Criar empresa em `/app/companies`.
+3. Criar conexoes mockadas em `/app/integrations`.
+4. Sincronizar devolucoes em `/app/returns`.
+5. Criar nota mockada para uma devolucao.
+6. Criar lote mockado em `/app/emissions`.
+7. Ver eventos em `/app/audit-logs`.
 
 ## Estrutura de Pastas
 
@@ -465,10 +766,13 @@ backend/
       exception_handlers.py
       v1/
         routes/
+          audit_logs.py
           auth.py
           companies.py
           health.py
           integrations.py
+          emission_batches.py
+          return_orders.py
     core/
       config.py
       encryption.py
@@ -477,49 +781,88 @@ backend/
       base.py
       session.py
     integrations/
+      errors.py
+      mock_scenarios.py
       mercado_livre/
+        mock_client.py
       shopee/
+        mock_client.py
       tiny/
+        mock_client.py
     jobs/
       scheduler.py
     models/
       domain.py
     repositories/
+      audit_logs.py
       companies.py
       integrations.py
+      emissions.py
+      return_notes.py
+      return_orders.py
       users.py
     schemas/
+      audit_logs.py
       auth.py
       companies.py
       health.py
       integrations.py
+      emissions.py
+      mock_integrations.py
+      return_notes.py
+      return_orders.py
     services/
+      audit_logs.py
       auth.py
       companies.py
       integration_credentials.py
       integrations.py
+      emissions.py
+      mock_integrations.py
+      return_notes.py
+      return_orders.py
     workers/
       celery_app.py
       tasks.py
   tests/
     test_auth.py
+    test_audit_logs.py
     test_companies.py
     test_domain_models.py
     test_encryption.py
     test_health.py
     test_integrations.py
+    test_emission_batches_mock.py
+    test_mock_integrations.py
+    test_return_notes_mock_creation.py
+    test_return_orders_mock_sync.py
   pyproject.toml
 
 frontend/
   app/
+    (protected)/
+      app/
+        audit-logs/
+        companies/
+        emissions/
+        integrations/
+        returns/
+    login/
+    register/
     globals.css
     layout.tsx
     page.tsx
   components/
     api-health-badge.tsx
+    auth-provider.tsx
+    protected-layout.tsx
+    ui.tsx
   hooks/
   services/
+    api.ts
+    ui-storage.ts
   types/
+    api.ts
   package.json
 
 docker-compose.yml
@@ -695,11 +1038,16 @@ Suite atual:
 Cobertura existente:
 
 - `test_health.py`: health check da API.
+- `test_audit_logs.py`: historico operacional, eventos de emissao, filtros, paginacao, isolamento multi-tenant e bloqueio de metadata sensivel.
 - `test_domain_models.py`: tabelas, constraints, indices e metadata SQLAlchemy.
 - `test_auth.py`: registro, login, tokens, refresh, usuario inativo e rota protegida.
 - `test_encryption.py`: AES-GCM, payload invalido, chave invalida e schema publico.
 - `test_companies.py`: empresas, vinculos, acesso cross-tenant e vinculo inativo.
 - `test_integrations.py`: integracoes, credenciais criptografadas, settings seguros e isolamento multi-tenant.
+- `test_emission_batches_mock.py`: criacao de lotes, jobs, status de notas, isolamento multi-tenant e processamento mockado.
+- `test_mock_integrations.py`: clients mockados de Tiny, Mercado Livre e Shopee, erros controlados e ausencia de segredos.
+- `test_return_orders_mock_sync.py`: sincronizacao mockada de devolucoes, idempotencia e isolamento multi-tenant.
+- `test_return_notes_mock_creation.py`: criacao mockada de nota de entrada, vinculo com NF-e original simulada, duplicidade e erros do Tiny mock.
 
 Os testes de API usam PostgreSQL local real quando disponivel. Se o banco nao estiver acessivel, testes dependentes de banco podem ser pulados por fixture.
 
@@ -747,35 +1095,37 @@ Ja implementado:
 - migrations Alembic iniciais;
 - rotas de empresas e usuarios vinculados;
 - rotas de integracoes sem chamada externa;
+- mocks isolados de Tiny, Mercado Livre e Shopee;
+- sincronizacao mockada de devolucoes;
+- cruzamento mockado com NF original;
+- criacao mockada de nota de entrada em `DRAFT`;
+- lotes e jobs de emissao mockada;
+- processamento mockado de emissao via service e wrapper Celery;
+- historico operacional de eventos de emissao em `audit_logs`;
+- frontend autenticado minimo;
 - testes reais de API e banco;
-- frontend operacional inicial.
 
 Ainda nao implementado:
 
 - conexao real com Tiny;
 - conexao real com Mercado Livre;
 - conexao real com Shopee;
-- busca de devolucoes;
-- cruzamento com NF original;
-- criacao de nota de entrada;
-- emissao em lote;
+- emissao real em lote;
 - armazenamento real de XML/DANFE em S3/R2/B2/Wasabi;
 - cold storage real;
-- frontend autenticado completo.
+- frontend completo de producao.
 
 ## Roadmap
 
-Proximos passos sugeridos sem mocks obrigatorios:
+Proximos passos sugeridos:
 
-1. Fortalecer testes de contrato com cenarios de banco e tenant boundary.
-2. Criar clients isolados para Tiny, Mercado Livre e Shopee sem ainda acoplar regras fiscais.
+1. Criar auditoria para mudancas sensiveis fora do fluxo de emissao.
+2. Melhorar frontend com listagens persistidas de notas/devolucoes quando o backend expuser endpoints dedicados.
 3. Implementar storage abstraction para documentos fiscais.
-4. Criar auditoria para mudancas sensiveis em integracoes.
-5. Criar rotas de marketplace accounts.
-6. Criar fluxo real de busca de devolucoes com idempotencia.
-7. Criar fluxo de cruzamento com NF-e original.
-8. Preparar emissao em lote via Celery.
-9. Implementar historico e erros operacionais.
-10. Implementar cold storage e politica de retencao.
+4. Implementar cold storage e politica de retencao.
+5. Criar fluxo real de busca de devolucoes com idempotencia.
+6. Criar fluxo real de cruzamento com NF-e original.
+7. Adicionar integracoes reais com Tiny, Mercado Livre e Shopee apos mocks e testes.
+8. Evoluir emissao real em lote somente apos validacao fiscal e contratos reais do Tiny.
 
 ATENCAO: qualquer decisao fiscal precisa ser validada com contador ou especialista fiscal antes de uso em producao.
