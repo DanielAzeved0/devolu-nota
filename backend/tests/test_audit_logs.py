@@ -372,7 +372,6 @@ async def test_empty_audit_log_list_returns_empty_items(client: AsyncClient) -> 
     response = await client.get(
         f"/api/v1/companies/{company['id']}/audit-logs",
         headers=auth_headers(str(user["access_token"])),
-        params={"action": "ACTION_WITHOUT_EVENTS"},
     )
 
     assert response.status_code == 200

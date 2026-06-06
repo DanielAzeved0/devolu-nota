@@ -46,7 +46,6 @@ export type MockEmissionScenario = "success" | "partial_failure" | "failure";
 export type ReturnOrderPublic = {
   id: string;
   company_id: string;
-  marketplace_account_id: string;
   marketplace: MarketplaceProvider;
   external_order_id: string;
   status: string;
@@ -67,13 +66,6 @@ export type ReturnOrderMockSyncResponse = {
   items: ReturnOrderPublic[];
 };
 
-export type ReturnOrderListResponse = {
-  items: ReturnOrderPublic[];
-  limit: number;
-  offset: number;
-  count: number;
-};
-
 export type ReturnNotePublic = {
   id: string;
   company_id: string;
@@ -87,13 +79,6 @@ export type ReturnNotePublic = {
   error_message: string | null;
   created_at: string;
   updated_at: string;
-};
-
-export type ReturnNoteListResponse = {
-  items: ReturnNotePublic[];
-  limit: number;
-  offset: number;
-  count: number;
 };
 
 export type EmissionJobPublic = {

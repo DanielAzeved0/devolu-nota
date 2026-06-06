@@ -9,9 +9,7 @@ import type {
   MarketplaceProvider,
   MockEmissionScenario,
   MockIntegrationScenario,
-  ReturnNoteListResponse,
   ReturnNotePublic,
-  ReturnOrderListResponse,
   ReturnOrderMockSyncResponse,
   UserPublic
 } from "@/types/api";
@@ -159,22 +157,6 @@ export function syncMockReturns(
   );
 }
 
-export function listReturnOrders(
-  token: string,
-  companyId: string,
-  query: {
-    status?: string;
-    marketplace?: MarketplaceProvider;
-    limit?: number;
-    offset?: number;
-  } = {}
-) {
-  return apiRequest<ReturnOrderListResponse>(`/api/v1/companies/${companyId}/return-orders`, {
-    token,
-    query
-  });
-}
-
 export function createMockReturnNote(
   token: string,
   companyId: string,
@@ -185,17 +167,6 @@ export function createMockReturnNote(
     `/api/v1/companies/${companyId}/return-orders/${returnOrderId}/return-notes/mock`,
     { method: "POST", token, body: payload }
   );
-}
-
-export function listReturnNotes(
-  token: string,
-  companyId: string,
-  query: { status?: string; return_order_id?: string; limit?: number; offset?: number } = {}
-) {
-  return apiRequest<ReturnNoteListResponse>(`/api/v1/companies/${companyId}/return-notes`, {
-    token,
-    query
-  });
 }
 
 export function createMockEmissionBatch(

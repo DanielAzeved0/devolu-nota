@@ -9,10 +9,6 @@ from app.services.companies import CompanyService
 from app.services.mock_integrations import MockIntegrationService
 
 
-class ReturnOrderNotFoundError(ValueError):
-    pass
-
-
 class ReturnOrderMockSyncService:
     def __init__(
         self,
@@ -102,49 +98,3 @@ class ReturnOrderMockSyncService:
                 for item in mock_return.items
             ],
         }
-
-
-class ReturnOrderQueryService:
-    def __init__(
-        self,
-        *,
-        companies: CompanyService,
-        return_orders: ReturnOrderRepository,
-    ) -> None:
-        self.companies = companies
-        self.return_orders = return_orders
-
-    async def list_company_return_orders(
-        self,
-        *,
-        company_id: UUID,
-        current_user: User,
-        status: str | None = None,
-        marketplace: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[ReturnOrder]:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
-        return await self.return_orders.list_for_company(
-            company_id=company_id,
-            status=status,
-            marketplace=marketplace,
-            limit=limit,
-            offset=offset,
-        )
-
-    async def get_company_return_order(
-        self,
-        *,
-        company_id: UUID,
-        return_order_id: UUID,
-        current_user: User,
-    ) -> ReturnOrder:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
-        return_order = await self.return_orders.get_by_company_id(
-            company_id=company_id,
-            return_order_id=return_order_id,
-        )
-        if return_order is None:
-            raise ReturnOrderNotFoundError("Return order not found")
-        return return_order

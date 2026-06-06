@@ -1,8 +1,6 @@
 from uuid import UUID
 
-from typing import Literal
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
@@ -14,26 +12,15 @@ from app.repositories.return_notes import ReturnNoteRepository
 from app.repositories.return_orders import ReturnOrderRepository
 from app.repositories.users import UserRepository
 from app.schemas.return_notes import ReturnNoteMockCreateRequest, ReturnNotePublic
-from app.schemas.mock_integrations import MarketplaceProvider
-from app.schemas.return_orders import (
-    ReturnOrderListResponse,
-    ReturnOrderMockSyncRequest,
-    ReturnOrderMockSyncResponse,
-    ReturnOrderPublic,
-)
+from app.schemas.return_orders import ReturnOrderMockSyncRequest, ReturnOrderMockSyncResponse
 from app.services.companies import CompanyNotFoundError, CompanyService
 from app.services.return_notes import (
     ReturnNoteAlreadyExistsError,
     ReturnNoteInvalidOriginalInvoiceError,
     ReturnNoteMockCreationService,
-)
-from app.services.return_orders import (
-    ReturnOrderMockSyncService,
     ReturnOrderNotFoundError,
-    ReturnOrderQueryService,
 )
-
-ReturnOrderStatus = Literal["OPEN", "READY_TO_REVIEW", "LINKED_TO_NFE", "CANCELLED", "ARCHIVED"]
+from app.services.return_orders import ReturnOrderMockSyncService
 
 router = APIRouter(prefix="/api/v1/companies/{company_id}/return-orders", tags=["return-orders"])
 
@@ -61,73 +48,6 @@ def build_return_note_mock_creation_service(session: AsyncSession) -> ReturnNote
         return_orders=ReturnOrderRepository(session),
         return_notes=ReturnNoteRepository(session),
     )
-
-
-def build_return_order_query_service(session: AsyncSession) -> ReturnOrderQueryService:
-    company_service = CompanyService(
-        companies=CompanyRepository(session),
-        company_users=CompanyUserRepository(session),
-        users=UserRepository(session),
-    )
-    return ReturnOrderQueryService(
-        companies=company_service,
-        return_orders=ReturnOrderRepository(session),
-    )
-
-
-@router.get("", response_model=ReturnOrderListResponse, summary="Lista devolucoes persistidas")
-async def list_return_orders(
-    company_id: UUID,
-    status_filter: ReturnOrderStatus | None = Query(default=None, alias="status"),
-    marketplace: MarketplaceProvider | None = None,
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db_session),
-) -> ReturnOrderListResponse:
-    service = build_return_order_query_service(session)
-    try:
-        return_orders = await service.list_company_return_orders(
-            company_id=company_id,
-            current_user=current_user,
-            status=status_filter,
-            marketplace=marketplace,
-            limit=limit,
-            offset=offset,
-        )
-    except CompanyNotFoundError:
-        raise not_found("Company not found") from None
-
-    return ReturnOrderListResponse(
-        items=[ReturnOrderPublic.model_validate(return_order) for return_order in return_orders],
-        limit=limit,
-        offset=offset,
-        count=len(return_orders),
-    )
-
-
-@router.get(
-    "/{return_order_id}",
-    response_model=ReturnOrderPublic,
-    summary="Consulta devolucao persistida",
-)
-async def get_return_order(
-    company_id: UUID,
-    return_order_id: UUID,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db_session),
-) -> ReturnOrderPublic:
-    service = build_return_order_query_service(session)
-    try:
-        return_order = await service.get_company_return_order(
-            company_id=company_id,
-            return_order_id=return_order_id,
-            current_user=current_user,
-        )
-    except (CompanyNotFoundError, ReturnOrderNotFoundError):
-        raise not_found("Return order not found") from None
-
-    return ReturnOrderPublic.model_validate(return_order)
 
 
 @router.post(

@@ -7,12 +7,9 @@ from app.api.v1.routes.audit_logs import router as audit_logs_router
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.emission_batches import router as emission_batches_router
-from app.api.v1.routes.fiscal_documents import router as fiscal_documents_router
 from app.api.v1.routes.health import router as health_router
 from app.api.v1.routes.integrations import router as integrations_router
-from app.api.v1.routes.return_notes import router as return_notes_router
 from app.api.v1.routes.return_orders import router as return_orders_router
-from app.api.v1.routes.retention import router as retention_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -39,8 +36,5 @@ app.include_router(auth_router)
 app.include_router(companies_router)
 app.include_router(integrations_router)
 app.include_router(return_orders_router)
-app.include_router(return_notes_router)
-app.include_router(fiscal_documents_router)
 app.include_router(emission_batches_router)
 app.include_router(audit_logs_router)
-app.include_router(retention_router)

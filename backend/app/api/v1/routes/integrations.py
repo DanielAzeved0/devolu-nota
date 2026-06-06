@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.db.session import get_db_session
 from app.models import User
-from app.repositories.audit_logs import AuditLogRepository
 from app.repositories.companies import CompanyRepository, CompanyUserRepository
 from app.repositories.integrations import IntegrationRepository
 from app.repositories.users import UserRepository
@@ -16,7 +15,6 @@ from app.schemas.integrations import (
     IntegrationPublic,
     IntegrationUpdateRequest,
 )
-from app.services.audit_logs import AuditLogService
 from app.services.companies import CompanyNotFoundError, CompanyService
 from app.services.integrations import IntegrationNotFoundError, IntegrationService
 
@@ -35,10 +33,6 @@ def build_integration_service(session: AsyncSession) -> IntegrationService:
     )
 
 
-def build_audit_log_service(session: AsyncSession) -> AuditLogService:
-    return AuditLogService(audit_logs=AuditLogRepository(session))
-
-
 @router.post(
     "",
     response_model=IntegrationPublic,
@@ -52,24 +46,11 @@ async def create_integration(
     session: AsyncSession = Depends(get_db_session),
 ) -> IntegrationPublic:
     service = build_integration_service(session)
-    audit_logs = build_audit_log_service(session)
     try:
         integration = await service.create_integration(
             company_id=company_id,
             payload=payload,
             current_user=current_user,
-        )
-        await audit_logs.create_log(
-            company_id=company_id,
-            user_id=current_user.id,
-            action="INTEGRATION_CREATED",
-            entity_type="integration",
-            entity_id=integration.id,
-            metadata={
-                "provider": integration.provider,
-                "status": integration.status,
-                "has_credentials": payload.credentials is not None,
-            },
         )
         await session.commit()
         await session.refresh(integration)
@@ -132,32 +113,12 @@ async def update_integration(
     session: AsyncSession = Depends(get_db_session),
 ) -> IntegrationPublic:
     service = build_integration_service(session)
-    audit_logs = build_audit_log_service(session)
     try:
-        existing_integration = await service.get_integration(
-            company_id=company_id,
-            integration_id=integration_id,
-            current_user=current_user,
-        )
-        previous_status = existing_integration.status
         integration = await service.update_integration(
             company_id=company_id,
             integration_id=integration_id,
             payload=payload,
             current_user=current_user,
-        )
-        await audit_logs.create_log(
-            company_id=company_id,
-            user_id=current_user.id,
-            action="INTEGRATION_UPDATED",
-            entity_type="integration",
-            entity_id=integration.id,
-            metadata={
-                "provider": integration.provider,
-                "previous_status": previous_status,
-                "new_status": integration.status,
-                "settings_updated": payload.settings is not None,
-            },
         )
         await session.commit()
         await session.refresh(integration)
@@ -181,32 +142,12 @@ async def replace_integration_credentials(
     session: AsyncSession = Depends(get_db_session),
 ) -> IntegrationPublic:
     service = build_integration_service(session)
-    audit_logs = build_audit_log_service(session)
     try:
-        existing_integration = await service.get_integration(
-            company_id=company_id,
-            integration_id=integration_id,
-            current_user=current_user,
-        )
-        previous_status = existing_integration.status
         integration = await service.replace_credentials(
             company_id=company_id,
             integration_id=integration_id,
             payload=payload,
             current_user=current_user,
-        )
-        await audit_logs.create_log(
-            company_id=company_id,
-            user_id=current_user.id,
-            action="INTEGRATION_CREDENTIALS_REPLACED",
-            entity_type="integration",
-            entity_id=integration.id,
-            metadata={
-                "provider": integration.provider,
-                "previous_status": previous_status,
-                "new_status": integration.status,
-                "credentials_replaced": True,
-            },
         )
         await session.commit()
         await session.refresh(integration)

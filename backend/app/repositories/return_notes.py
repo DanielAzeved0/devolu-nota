@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ReturnNote
@@ -33,39 +33,6 @@ class ReturnNoteRepository:
             )
         )
         return result.scalar_one_or_none()
-
-    async def get_by_company_id(self, *, company_id: UUID, return_note_id: UUID) -> ReturnNote | None:
-        result = await self.session.execute(
-            select(ReturnNote).where(
-                ReturnNote.id == return_note_id,
-                ReturnNote.company_id == company_id,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def list_for_company(
-        self,
-        *,
-        company_id: UUID,
-        status: str | None = None,
-        return_order_id: UUID | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[ReturnNote]:
-        statement: Select[tuple[ReturnNote]] = select(ReturnNote).where(
-            ReturnNote.company_id == company_id
-        )
-        if status is not None:
-            statement = statement.where(ReturnNote.status == status)
-        if return_order_id is not None:
-            statement = statement.where(ReturnNote.return_order_id == return_order_id)
-
-        result = await self.session.execute(
-            statement.order_by(ReturnNote.created_at.desc(), ReturnNote.id.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        return list(result.scalars().all())
 
     async def create_mock_draft(
         self,

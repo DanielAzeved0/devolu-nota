@@ -25,10 +25,3 @@ class ReturnNotePublic(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class ReturnNoteListResponse(BaseModel):
-    items: list[ReturnNotePublic]
-    limit: int
-    offset: int
-    count: int

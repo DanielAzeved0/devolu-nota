@@ -6,7 +6,10 @@ from app.repositories.return_orders import ReturnOrderRepository
 from app.schemas.return_notes import ReturnNoteMockCreateRequest
 from app.services.companies import CompanyService
 from app.services.mock_integrations import MockIntegrationService
-from app.services.return_orders import ReturnOrderNotFoundError
+
+
+class ReturnOrderNotFoundError(ValueError):
+    pass
 
 
 class ReturnNoteAlreadyExistsError(ValueError):
@@ -14,10 +17,6 @@ class ReturnNoteAlreadyExistsError(ValueError):
 
 
 class ReturnNoteInvalidOriginalInvoiceError(ValueError):
-    pass
-
-
-class ReturnNoteNotFoundError(ValueError):
     pass
 
 
@@ -73,49 +72,3 @@ class ReturnNoteMockCreationService:
             return_order_id=return_order_id,
             original_nfe_key=original_invoice.original_nfe_key,
         )
-
-
-class ReturnNoteQueryService:
-    def __init__(
-        self,
-        *,
-        companies: CompanyService,
-        return_notes: ReturnNoteRepository,
-    ) -> None:
-        self.companies = companies
-        self.return_notes = return_notes
-
-    async def list_company_return_notes(
-        self,
-        *,
-        company_id: UUID,
-        current_user: User,
-        status: str | None = None,
-        return_order_id: UUID | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[ReturnNote]:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
-        return await self.return_notes.list_for_company(
-            company_id=company_id,
-            status=status,
-            return_order_id=return_order_id,
-            limit=limit,
-            offset=offset,
-        )
-
-    async def get_company_return_note(
-        self,
-        *,
-        company_id: UUID,
-        return_note_id: UUID,
-        current_user: User,
-    ) -> ReturnNote:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
-        return_note = await self.return_notes.get_by_company_id(
-            company_id=company_id,
-            return_note_id=return_note_id,
-        )
-        if return_note is None:
-            raise ReturnNoteNotFoundError("Return note not found")
-        return return_note

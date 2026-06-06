@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { CompanyRequired, EmptyState, ErrorBox, PageHeader, SuccessBox } from "@/components/ui";
-import { createMockReturnNote, listReturnNotes, listReturnOrders, syncMockReturns, toUiError } from "@/services/api";
+import { createMockReturnNote, syncMockReturns, toUiError } from "@/services/api";
+import { getStoredReturnNotes, storeReturnNote } from "@/services/ui-storage";
 import type {
   ApiError,
   MarketplaceProvider,
@@ -27,28 +28,10 @@ export default function ReturnsPage() {
   const [creatingNoteId, setCreatingNoteId] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadPersistedData() {
-      if (!accessToken || !activeCompany) {
-        setOrders([]);
-        setNotes([]);
-        return;
-      }
-      setError(null);
-      setSummary("");
-      try {
-        const [ordersResponse, notesResponse] = await Promise.all([
-          listReturnOrders(accessToken, activeCompany.id, { limit: 100, offset: 0 }),
-          listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 })
-        ]);
-        setOrders(ordersResponse.items);
-        setNotes(notesResponse.items);
-      } catch (nextError) {
-        setError(toUiError(nextError));
-      }
-    }
-
-    void loadPersistedData();
-  }, [accessToken, activeCompany]);
+    setOrders([]);
+    setSummary("");
+    setNotes(activeCompany ? getStoredReturnNotes(activeCompany.id) : []);
+  }, [activeCompany]);
 
   const notesByReturnOrder = useMemo(
     () => new Map(notes.map((note) => [note.return_order_id, note])),
@@ -65,12 +48,7 @@ export default function ReturnsPage() {
     setIsSyncing(true);
     try {
       const response = await syncMockReturns(accessToken, activeCompany.id, { marketplace, scenario });
-      const [ordersResponse, notesResponse] = await Promise.all([
-        listReturnOrders(accessToken, activeCompany.id, { limit: 100, offset: 0 }),
-        listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 })
-      ]);
-      setOrders(ordersResponse.items);
-      setNotes(notesResponse.items);
+      setOrders(response.items);
       setSummary(`Criadas ${response.created}, atualizadas ${response.updated}, ignoradas ${response.skipped}.`);
     } catch (nextError) {
       setError(toUiError(nextError));
@@ -86,13 +64,9 @@ export default function ReturnsPage() {
     setError(null);
     setCreatingNoteId(returnOrderId);
     try {
-      await createMockReturnNote(accessToken, activeCompany.id, returnOrderId, { scenario: "success" });
-      const [ordersResponse, notesResponse] = await Promise.all([
-        listReturnOrders(accessToken, activeCompany.id, { limit: 100, offset: 0 }),
-        listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 })
-      ]);
-      setOrders(ordersResponse.items);
-      setNotes(notesResponse.items);
+      const note = await createMockReturnNote(accessToken, activeCompany.id, returnOrderId, { scenario: "success" });
+      storeReturnNote(activeCompany.id, note);
+      setNotes(getStoredReturnNotes(activeCompany.id));
     } catch (nextError) {
       setError(toUiError(nextError));
     } finally {

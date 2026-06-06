@@ -16,7 +16,6 @@ class ReturnOrderMockSyncRequest(BaseModel):
 class ReturnOrderPublic(BaseModel):
     id: UUID
     company_id: UUID
-    marketplace_account_id: UUID
     marketplace: str
     external_order_id: str
     status: str
@@ -37,10 +36,3 @@ class ReturnOrderMockSyncResponse(BaseModel):
     updated: int
     skipped: int
     items: list[ReturnOrderPublic]
-
-
-class ReturnOrderListResponse(BaseModel):
-    items: list[ReturnOrderPublic]
-    limit: int
-    offset: int
-    count: int

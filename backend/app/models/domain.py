@@ -300,7 +300,6 @@ class FiscalDocument(TimestampMixin, Base):
         Index("ix_fiscal_documents_status", "status"),
         Index("ix_fiscal_documents_created_at", "created_at"),
         Index("ix_fiscal_documents_access_key", "access_key"),
-        Index("ix_fiscal_documents_storage_archive_id", "storage_archive_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -309,7 +308,6 @@ class FiscalDocument(TimestampMixin, Base):
     document_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
     access_key: Mapped[str | None] = mapped_column(String(44))
-    storage_archive_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("storage_archives.id"))
     xml_storage_archive_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("storage_archives.id"))
     pdf_storage_archive_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("storage_archives.id"))
     issued_at: Mapped[datetime | None] = mapped_column()
