@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.db.session import get_db_session
 from app.models import User
+from app.repositories.audit_logs import AuditLogRepository
 from app.repositories.companies import CompanyRepository, CompanyUserRepository
 from app.repositories.users import UserRepository
 from app.schemas.companies import (
@@ -22,6 +23,7 @@ from app.services.companies import (
     CompanyUserAlreadyExistsError,
     UserNotFoundError,
 )
+from app.services.audit_logs import AuditLogService
 
 router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
 
@@ -32,6 +34,10 @@ def build_company_service(session: AsyncSession) -> CompanyService:
         company_users=CompanyUserRepository(session),
         users=UserRepository(session),
     )
+
+
+def build_audit_log_service(session: AsyncSession) -> AuditLogService:
+    return AuditLogService(audit_logs=AuditLogRepository(session))
 
 
 @router.post(
@@ -46,8 +52,32 @@ async def create_company(
     session: AsyncSession = Depends(get_db_session),
 ) -> CompanyPublic:
     service = build_company_service(session)
+    audit_logs = build_audit_log_service(session)
     try:
-        company = await service.create_company(payload=payload, current_user=current_user)
+        company, membership = await service.create_company(payload=payload, current_user=current_user)
+        await audit_logs.create_log(
+            company_id=company.id,
+            user_id=current_user.id,
+            action="COMPANY_CREATED",
+            entity_type="company",
+            entity_id=company.id,
+            metadata={
+                "status": company.status,
+                "trade_name_present": company.trade_name is not None,
+            },
+        )
+        await audit_logs.create_log(
+            company_id=company.id,
+            user_id=current_user.id,
+            action="COMPANY_USER_LINKED",
+            entity_type="company_user",
+            entity_id=membership.id,
+            metadata={
+                "role": membership.role,
+                "status": membership.status,
+                "target_user_id": str(membership.user_id),
+            },
+        )
         await session.commit()
         await session.refresh(company)
     except CompanyDocumentAlreadyExistsError:
@@ -115,11 +145,24 @@ async def add_company_user(
     session: AsyncSession = Depends(get_db_session),
 ) -> CompanyUserPublic:
     service = build_company_service(session)
+    audit_logs = build_audit_log_service(session)
     try:
         membership = await service.add_company_user(
             company_id=company_id,
             payload=payload,
             current_user=current_user,
+        )
+        await audit_logs.create_log(
+            company_id=company_id,
+            user_id=current_user.id,
+            action="COMPANY_USER_LINKED",
+            entity_type="company_user",
+            entity_id=membership.id,
+            metadata={
+                "role": membership.role,
+                "status": membership.status,
+                "target_user_id": str(membership.user_id),
+            },
         )
         await session.commit()
     except CompanyNotFoundError:

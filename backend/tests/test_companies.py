@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
-from app.models import CompanyUser
+from app.models import AuditLog, CompanyUser
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,6 +87,16 @@ async def get_membership(company_id: str, user_id: str) -> CompanyUser | None:
         return result.scalar_one_or_none()
 
 
+async def list_audit_logs(company_id: str) -> list[AuditLog]:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AuditLog)
+            .where(AuditLog.company_id == uuid.UUID(company_id))
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        )
+        return list(result.scalars().all())
+
+
 async def disable_membership(company_id: str, user_id: str) -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -111,6 +121,21 @@ async def test_create_company_links_current_user_as_owner(client: AsyncClient) -
     assert membership.status == "ACTIVE"
     assert company["status"] == "ACTIVE"
     assert "password_hash" not in str(company)
+
+
+async def test_create_company_writes_safe_audit_logs(client: AsyncClient) -> None:
+    owner = await register_user(client)
+
+    company = await create_company(client, str(owner["access_token"]))
+
+    logs = await list_audit_logs(str(company["id"]))
+    actions = [log.action for log in logs]
+    assert "COMPANY_CREATED" in actions
+    assert "COMPANY_USER_LINKED" in actions
+    serialized_logs = str([log.metadata_ for log in logs])
+    assert "password" not in serialized_logs
+    assert "password_hash" not in serialized_logs
+    assert "access_token" not in serialized_logs
 
 
 async def test_list_and_get_companies_are_scoped_to_current_user(client: AsyncClient) -> None:
@@ -185,6 +210,29 @@ async def test_add_and_list_company_users(client: AsyncClient) -> None:
     listed_user_ids = [item["user_id"] for item in list_response.json()]
     assert target["user"]["id"] in listed_user_ids
     assert owner["user"]["id"] in listed_user_ids
+
+
+async def test_add_company_user_writes_safe_audit_log(client: AsyncClient) -> None:
+    owner = await register_user(client)
+    target = await register_user(client)
+    company = await create_company(client, str(owner["access_token"]))
+
+    response = await client.post(
+        f"/api/v1/companies/{company['id']}/users",
+        headers=auth_headers(str(owner["access_token"])),
+        json={"user_id": target["user"]["id"], "role": "OPERATOR"},
+    )
+
+    assert response.status_code == 201
+    logs = await list_audit_logs(str(company["id"]))
+    link_logs = [log for log in logs if log.action == "COMPANY_USER_LINKED"]
+    assert len(link_logs) == 2
+    assert link_logs[-1].entity_type == "company_user"
+    assert link_logs[-1].metadata_ == {
+        "role": "OPERATOR",
+        "status": "ACTIVE",
+        "target_user_id": target["user"]["id"],
+    }
 
 
 async def test_add_company_user_rejects_duplicate_and_missing_user(client: AsyncClient) -> None:

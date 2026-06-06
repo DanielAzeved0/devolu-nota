@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Integration, MarketplaceAccount, ReturnOrder
@@ -35,6 +35,30 @@ class ReturnOrderRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_for_company(
+        self,
+        *,
+        company_id: UUID,
+        status: str | None = None,
+        marketplace: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ReturnOrder]:
+        statement: Select[tuple[ReturnOrder]] = select(ReturnOrder).where(
+            ReturnOrder.company_id == company_id
+        )
+        if status is not None:
+            statement = statement.where(ReturnOrder.status == status)
+        if marketplace is not None:
+            statement = statement.where(ReturnOrder.marketplace == marketplace)
+
+        result = await self.session.execute(
+            statement.order_by(ReturnOrder.created_at.desc(), ReturnOrder.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all())
 
     async def create(
         self,

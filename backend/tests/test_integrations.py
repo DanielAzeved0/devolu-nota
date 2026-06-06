@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
-from app.models import Integration
+from app.models import AuditLog, Integration
 from app.services.integration_credentials import decrypt_integration_credentials
 
 pytestmark = pytest.mark.asyncio
@@ -108,6 +108,16 @@ async def count_integrations_for_company(company_id: str) -> int:
         return len(result.scalars().all())
 
 
+async def list_audit_logs(company_id: str) -> list[AuditLog]:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AuditLog)
+            .where(AuditLog.company_id == uuid.UUID(company_id))
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        )
+        return list(result.scalars().all())
+
+
 def assert_public_response_has_no_secrets(payload: object, *secrets: str) -> None:
     serialized = str(payload)
     assert "encrypted_credentials" not in serialized
@@ -149,6 +159,16 @@ async def test_create_integration_with_credentials_encrypts_values(client: Async
     decrypted_credentials = decrypt_integration_credentials(stored_integration.encrypted_credentials)
     assert decrypted_credentials["access_token"] == access_token
     assert decrypted_credentials["refresh_token"] == refresh_token
+
+    logs = await list_audit_logs(str(company["id"]))
+    create_logs = [log for log in logs if log.action == "INTEGRATION_CREATED"]
+    assert len(create_logs) == 1
+    assert create_logs[0].metadata_ == {
+        "provider": "TINY",
+        "status": "ACTIVE",
+        "has_credentials": True,
+    }
+    assert_public_response_has_no_secrets([log.metadata_ for log in logs], access_token, refresh_token)
 
 
 async def test_create_list_and_get_integration_without_credentials(client: AsyncClient) -> None:
@@ -215,6 +235,25 @@ async def test_update_integration_status_settings_and_credentials(client: AsyncC
     assert api_token not in str(stored_integration.encrypted_credentials)
     decrypted_credentials = decrypt_integration_credentials(stored_integration.encrypted_credentials)
     assert decrypted_credentials["api_token"] == api_token
+
+    logs = await list_audit_logs(str(company["id"]))
+    update_logs = [log for log in logs if log.action == "INTEGRATION_UPDATED"]
+    credentials_logs = [log for log in logs if log.action == "INTEGRATION_CREDENTIALS_REPLACED"]
+    assert len(update_logs) == 1
+    assert update_logs[0].metadata_ == {
+        "provider": "TINY",
+        "previous_status": "DISCONNECTED",
+        "new_status": "ERROR",
+        "settings_updated": True,
+    }
+    assert len(credentials_logs) == 1
+    assert credentials_logs[0].metadata_ == {
+        "provider": "TINY",
+        "previous_status": "ERROR",
+        "new_status": "ACTIVE",
+        "credentials_replaced": True,
+    }
+    assert_public_response_has_no_secrets([log.metadata_ for log in logs], api_token)
 
 
 async def test_integration_routes_deny_cross_tenant_access(client: AsyncClient) -> None:

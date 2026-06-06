@@ -1,21 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { CompanyRequired, PageHeader } from "@/components/ui";
-import { getStoredReturnNotes } from "@/services/ui-storage";
+import { CompanyRequired, ErrorBox, PageHeader } from "@/components/ui";
+import { listReturnNotes, toUiError } from "@/services/api";
+import type { ApiError, ReturnNotePublic } from "@/types/api";
 
 export default function DashboardPage() {
-  const { activeCompany, activeCompanyId, companies, user } = useAuth();
-  const storedNotes = useMemo(
-    () => (activeCompanyId ? getStoredReturnNotes(activeCompanyId) : []),
-    [activeCompanyId]
-  );
+  const { accessToken, activeCompany, companies, user } = useAuth();
+  const [notes, setNotes] = useState<ReturnNotePublic[]>([]);
+  const [error, setError] = useState<ApiError | null>(null);
 
-  const issuedCount = storedNotes.filter((note) => note.status === "ISSUED").length;
-  const queuedCount = storedNotes.filter((note) => note.status === "QUEUED").length;
-  const draftCount = storedNotes.filter((note) => note.status === "DRAFT").length;
+  useEffect(() => {
+    async function loadNotes() {
+      if (!accessToken || !activeCompany) {
+        setNotes([]);
+        return;
+      }
+      setError(null);
+      try {
+        const response = await listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 });
+        setNotes(response.items);
+      } catch (nextError) {
+        setError(toUiError(nextError));
+      }
+    }
+
+    void loadNotes();
+  }, [accessToken, activeCompany]);
+
+  const issuedCount = notes.filter((note) => note.status === "ISSUED").length;
+  const queuedCount = notes.filter((note) => note.status === "QUEUED").length;
+  const draftCount = notes.filter((note) => note.status === "DRAFT").length;
 
   return (
     <>
@@ -29,14 +46,15 @@ export default function DashboardPage() {
         <CompanyRequired />
       ) : (
         <>
+          {error ? <ErrorBox message={error.message} /> : null}
           <section className="metrics" aria-label="Indicadores operacionais">
             <div>
               <span>Empresas acessiveis</span>
               <strong>{companies.length}</strong>
             </div>
             <div>
-              <span>Notas na sessao</span>
-              <strong>{storedNotes.length}</strong>
+              <span>Notas persistidas</span>
+              <strong>{notes.length}</strong>
             </div>
             <div>
               <span>Emitidas mockadas</span>

@@ -27,8 +27,12 @@ O runtime atual inclui:
 - mocks isolados para Tiny, Mercado Livre e Shopee;
 - sincronizacao mockada de devolucoes de marketplace;
 - criacao mockada de nota fiscal de entrada de devolucao;
+- listagens persistidas de devolucoes e notas por empresa;
 - lotes e jobs de emissao mockada;
 - historico operacional em `audit_logs`;
+- auditoria de mudancas sensiveis em empresas, vinculos e integracoes;
+- storage abstraction mockada/local para documentos fiscais;
+- cold storage e politica de retencao mockados;
 - frontend autenticado minimo para operar o fluxo mockado;
 - sanitizacao de erros de validacao para nao vazar payload sensivel;
 - testes reais contra API e PostgreSQL local;
@@ -56,8 +60,12 @@ Nao existe, nesta etapa:
 - **Mocks de integracao**: clients mockados de Tiny, Mercado Livre e Shopee validam fluxos antes das integracoes reais.
 - **Sincronizacao mockada de devolucoes**: devolucoes de marketplace sao persistidas com idempotencia por empresa, marketplace e pedido externo.
 - **Criacao mockada de nota de entrada**: o backend cruza devolucao com NF-e original simulada no Tiny e cria `return_notes` em `DRAFT`.
+- **Consultas persistidas**: devolucoes e notas podem ser listadas e consultadas por empresa com filtros, paginacao e isolamento multi-tenant.
 - **Emissao mockada em lote**: o backend cria `emission_batches`, cria `emission_jobs`, move notas para `QUEUED` e processa cenarios mockados de sucesso ou falha.
 - **Historico operacional**: eventos de emissao mockada sao registrados em `audit_logs` e expostos por rota multi-tenant.
+- **Auditoria sensivel**: criacao de empresas, vinculos de usuarios, integracoes e troca de credenciais registram logs sem segredos.
+- **Storage fiscal mockado**: documentos fiscais podem ser registrados em storage local/mockado com `storage_archives`, `fiscal_documents` e auditoria.
+- **Retencao mockada**: arquivos antigos podem ser movidos para `COLD` apos 5 anos e marcados como `DELETED` apos 11 anos, sempre com `retention_jobs` e auditoria.
 - **Frontend autenticado minimo**: login, cadastro, empresas, conexoes, devolucoes, emissoes e historico consomem a API existente.
 - **Erros 422 sanitizados**: payloads invalidos nao retornam `input` nem valores sensiveis.
 - **Alembic versionado**: schema relacional criado e evoluido por migrations.
@@ -96,10 +104,11 @@ flowchart TD
 11. Backend persiste devolucoes com isolamento por empresa e idempotencia.
 12. Usuario cria nota de entrada mockada em `POST /api/v1/companies/{company_id}/return-orders/{return_order_id}/return-notes/mock`.
 13. Backend busca a NF-e original simulada no Tiny mock, cria `return_notes` em `DRAFT` e vincula o pedido a `LINKED_TO_NFE`.
-14. Usuario cria lote de emissao mockada em `POST /api/v1/companies/{company_id}/emission-batches/mock`.
-15. Backend cria um job por nota, move as notas para `QUEUED` e permite processamento mockado via service/task Celery.
-16. Backend registra eventos operacionais em `audit_logs`.
-17. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
+14. Frontend consulta devolucoes e notas persistidas em rotas dedicadas, sem depender de estado local como fonte operacional.
+15. Usuario cria lote de emissao mockada em `POST /api/v1/companies/{company_id}/emission-batches/mock`.
+16. Backend cria um job por nota, move as notas para `QUEUED` e permite processamento mockado via service/task Celery.
+17. Backend registra eventos operacionais em `audit_logs`.
+18. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
 
 ## API
 
@@ -1048,6 +1057,8 @@ Cobertura existente:
 - `test_mock_integrations.py`: clients mockados de Tiny, Mercado Livre e Shopee, erros controlados e ausencia de segredos.
 - `test_return_orders_mock_sync.py`: sincronizacao mockada de devolucoes, idempotencia e isolamento multi-tenant.
 - `test_return_notes_mock_creation.py`: criacao mockada de nota de entrada, vinculo com NF-e original simulada, duplicidade e erros do Tiny mock.
+- `test_fiscal_documents.py`: storage fiscal mockado, vinculo com nota, archive generico, auditoria e isolamento multi-tenant.
+- `test_retention.py`: politica de retencao mockada, cold storage, marcacao de exclusao, jobs e auditoria.
 
 Os testes de API usam PostgreSQL local real quando disponivel. Se o banco nao estiver acessivel, testes dependentes de banco podem ser pulados por fixture.
 
@@ -1099,9 +1110,13 @@ Ja implementado:
 - sincronizacao mockada de devolucoes;
 - cruzamento mockado com NF original;
 - criacao mockada de nota de entrada em `DRAFT`;
+- endpoints persistidos para listar e consultar devolucoes e notas;
 - lotes e jobs de emissao mockada;
 - processamento mockado de emissao via service e wrapper Celery;
 - historico operacional de eventos de emissao em `audit_logs`;
+- auditoria de criacao de empresa, vinculo de usuarios, integracoes e credenciais;
+- storage abstraction mockada para documentos fiscais em `storage_archives` e `fiscal_documents`;
+- cold storage e politica de retencao mockados com `retention_jobs`;
 - frontend autenticado minimo;
 - testes reais de API e banco;
 
@@ -1112,20 +1127,16 @@ Ainda nao implementado:
 - conexao real com Shopee;
 - emissao real em lote;
 - armazenamento real de XML/DANFE em S3/R2/B2/Wasabi;
-- cold storage real;
+- cold storage real em provedor externo;
 - frontend completo de producao.
 
 ## Roadmap
 
 Proximos passos sugeridos:
 
-1. Criar auditoria para mudancas sensiveis fora do fluxo de emissao.
-2. Melhorar frontend com listagens persistidas de notas/devolucoes quando o backend expuser endpoints dedicados.
-3. Implementar storage abstraction para documentos fiscais.
-4. Implementar cold storage e politica de retencao.
-5. Criar fluxo real de busca de devolucoes com idempotencia.
-6. Criar fluxo real de cruzamento com NF-e original.
-7. Adicionar integracoes reais com Tiny, Mercado Livre e Shopee apos mocks e testes.
-8. Evoluir emissao real em lote somente apos validacao fiscal e contratos reais do Tiny.
+1. Criar fluxo real de busca de devolucoes com idempotencia.
+2. Criar fluxo real de cruzamento com NF-e original.
+3. Adicionar integracoes reais com Tiny, Mercado Livre e Shopee apos mocks e testes.
+4. Evoluir emissao real em lote somente apos validacao fiscal e contratos reais do Tiny.
 
 ATENCAO: qualquer decisao fiscal precisa ser validada com contador ou especialista fiscal antes de uso em producao.

@@ -33,7 +33,9 @@ class CompanyService:
         self.company_users = company_users
         self.users = users
 
-    async def create_company(self, *, payload: CompanyCreateRequest, current_user: User) -> Company:
+    async def create_company(
+        self, *, payload: CompanyCreateRequest, current_user: User
+    ) -> tuple[Company, CompanyUser]:
         existing_company = await self.companies.get_by_document(payload.document)
         if existing_company is not None:
             raise CompanyDocumentAlreadyExistsError("Company document already exists")
@@ -43,8 +45,10 @@ class CompanyService:
             trade_name=payload.trade_name,
             document=payload.document,
         )
-        await self.company_users.create(company_id=company.id, user_id=current_user.id, role="OWNER")
-        return company
+        membership = await self.company_users.create(
+            company_id=company.id, user_id=current_user.id, role="OWNER"
+        )
+        return company, membership
 
     async def list_companies(self, current_user: User) -> list[Company]:
         return await self.companies.list_for_user(current_user.id)

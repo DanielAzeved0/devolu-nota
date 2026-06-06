@@ -3,8 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { CompanyRequired, EmptyState, ErrorBox, PageHeader, SuccessBox } from "@/components/ui";
-import { createMockEmissionBatch, toUiError } from "@/services/api";
-import { getStoredReturnNotes, replaceStoredReturnNotes } from "@/services/ui-storage";
+import { createMockEmissionBatch, listReturnNotes, toUiError } from "@/services/api";
 import type { ApiError, EmissionBatchCreatedResponse, MockEmissionScenario, ReturnNotePublic } from "@/types/api";
 
 const scenarios: MockEmissionScenario[] = ["success", "partial_failure", "failure"];
@@ -20,10 +19,24 @@ export default function EmissionsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    setNotes(activeCompany ? getStoredReturnNotes(activeCompany.id) : []);
-    setSelectedIds([]);
-    setBatch(null);
-  }, [activeCompany]);
+    async function loadNotes() {
+      setSelectedIds([]);
+      setBatch(null);
+      if (!accessToken || !activeCompany) {
+        setNotes([]);
+        return;
+      }
+      setError(null);
+      try {
+        const response = await listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 });
+        setNotes(response.items);
+      } catch (nextError) {
+        setError(toUiError(nextError));
+      }
+    }
+
+    void loadNotes();
+  }, [accessToken, activeCompany]);
 
   const eligibleNotes = useMemo(
     () => notes.filter((note) => note.status === "DRAFT" || note.status === "READY_TO_EMIT"),
@@ -50,11 +63,8 @@ export default function EmissionsPage() {
         scenario
       });
       setBatch(response);
-      const queuedNotes = notes.map((note) =>
-        selectedIds.includes(note.id) ? { ...note, status: "QUEUED" } : note
-      );
-      setNotes(queuedNotes);
-      replaceStoredReturnNotes(activeCompany.id, queuedNotes);
+      const notesResponse = await listReturnNotes(accessToken, activeCompany.id, { limit: 100, offset: 0 });
+      setNotes(notesResponse.items);
       setSelectedIds([]);
       setSuccess("Lote de emissao mockada criado.");
     } catch (nextError) {
