@@ -5,6 +5,10 @@ from app.repositories.companies import CompanyRepository, CompanyUserRepository
 from app.repositories.users import UserRepository
 from app.schemas.companies import CompanyCreateRequest, CompanyUserCreateRequest, CompanyUserPublic
 
+COMPANY_ADMIN_ROLES = ("OWNER", "ADMIN")
+COMPANY_OPERATOR_ROLES = ("OWNER", "ADMIN", "OPERATOR")
+COMPANY_READER_ROLES = ("OWNER", "ADMIN", "OPERATOR", "VIEWER")
+
 
 class CompanyDocumentAlreadyExistsError(ValueError):
     pass
@@ -19,6 +23,10 @@ class UserNotFoundError(ValueError):
 
 
 class CompanyUserAlreadyExistsError(ValueError):
+    pass
+
+
+class CompanyPermissionDeniedError(ValueError):
     pass
 
 
@@ -58,6 +66,24 @@ class CompanyService:
             raise CompanyNotFoundError("Company not found")
         return company
 
+    async def require_company_role(
+        self,
+        *,
+        company_id: UUID,
+        current_user: User,
+        allowed_roles: tuple[str, ...],
+    ) -> CompanyUser:
+        await self.get_company(company_id=company_id, current_user=current_user)
+        membership = await self.company_users.get_active_membership(
+            company_id=company_id,
+            user_id=current_user.id,
+        )
+        if membership is None:
+            raise CompanyNotFoundError("Company not found")
+        if membership.role not in allowed_roles:
+            raise CompanyPermissionDeniedError("Insufficient company role")
+        return membership
+
     async def list_company_users(
         self, *, company_id: UUID, current_user: User
     ) -> list[CompanyUserPublic]:
@@ -72,7 +98,11 @@ class CompanyService:
         payload: CompanyUserCreateRequest,
         current_user: User,
     ) -> CompanyUserPublic:
-        await self.get_company(company_id=company_id, current_user=current_user)
+        await self.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_ADMIN_ROLES,
+        )
 
         target_user = await self.users.get_by_id(payload.user_id)
         if target_user is None:

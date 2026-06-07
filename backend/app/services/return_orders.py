@@ -5,7 +5,7 @@ from app.models import ReturnOrder, User
 from app.repositories.return_orders import ReturnOrderRepository
 from app.schemas.mock_integrations import MockReturnOrder
 from app.schemas.return_orders import ReturnOrderMockSyncRequest, ReturnOrderMockSyncResponse
-from app.services.companies import CompanyService
+from app.services.companies import COMPANY_OPERATOR_ROLES, CompanyService
 from app.services.mock_integrations import MockIntegrationService
 
 
@@ -28,7 +28,11 @@ class ReturnOrderMockSyncService:
         payload: ReturnOrderMockSyncRequest,
         current_user: User,
     ) -> ReturnOrderMockSyncResponse:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_OPERATOR_ROLES,
+        )
         mock_returns = await self.mock_integrations.list_marketplace_returns(
             company_id=company_id,
             marketplace=payload.marketplace,

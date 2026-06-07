@@ -17,7 +17,7 @@ from app.schemas.emissions import (
     EmissionJobListResponse,
     EmissionJobPublic,
 )
-from app.services.companies import CompanyNotFoundError, CompanyService
+from app.services.companies import CompanyNotFoundError, CompanyPermissionDeniedError, CompanyService
 from app.services.emissions import (
     EmissionBatchMockService,
     EmissionBatchNotFoundError,
@@ -67,6 +67,9 @@ async def create_mock_emission_batch(
     except CompanyNotFoundError:
         await session.rollback()
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
     except (ReturnNoteNotEligibleError, ReturnNoteAlreadyQueuedError) as exc:
         await session.rollback()
         raise conflict(str(exc)) from None
@@ -131,3 +134,7 @@ def not_found(detail: str) -> HTTPException:
 
 def conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def forbidden(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)

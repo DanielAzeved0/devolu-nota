@@ -13,7 +13,7 @@ from app.repositories.return_orders import ReturnOrderRepository
 from app.repositories.users import UserRepository
 from app.schemas.return_notes import ReturnNoteMockCreateRequest, ReturnNotePublic
 from app.schemas.return_orders import ReturnOrderMockSyncRequest, ReturnOrderMockSyncResponse
-from app.services.companies import CompanyNotFoundError, CompanyService
+from app.services.companies import CompanyNotFoundError, CompanyPermissionDeniedError, CompanyService
 from app.services.return_notes import (
     ReturnNoteAlreadyExistsError,
     ReturnNoteInvalidOriginalInvoiceError,
@@ -72,6 +72,9 @@ async def sync_mock_return_orders(
     except CompanyNotFoundError:
         await session.rollback()
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
     except MockIntegrationError as exc:
         await session.rollback()
         raise provider_error(exc) from None
@@ -105,6 +108,9 @@ async def create_mock_return_note(
     except (CompanyNotFoundError, ReturnOrderNotFoundError):
         await session.rollback()
         raise not_found("Return order not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
     except ReturnNoteAlreadyExistsError:
         await session.rollback()
         raise conflict("Return note already exists") from None
@@ -137,3 +143,7 @@ def provider_error(exc: MockIntegrationError) -> HTTPException:
         else status.HTTP_502_BAD_GATEWAY
     )
     return HTTPException(status_code=status_code, detail=exc.payload.model_dump())
+
+
+def forbidden(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)

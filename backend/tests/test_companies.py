@@ -187,6 +187,40 @@ async def test_add_and_list_company_users(client: AsyncClient) -> None:
     assert owner["user"]["id"] in listed_user_ids
 
 
+async def test_add_company_user_requires_admin_role(client: AsyncClient) -> None:
+    owner = await register_user(client)
+    admin = await register_user(client)
+    viewer = await register_user(client)
+    target = await register_user(client)
+    company = await create_company(client, str(owner["access_token"]))
+
+    admin_add_response = await client.post(
+        f"/api/v1/companies/{company['id']}/users",
+        headers=auth_headers(str(owner["access_token"])),
+        json={"user_id": admin["user"]["id"], "role": "ADMIN"},
+    )
+    viewer_add_response = await client.post(
+        f"/api/v1/companies/{company['id']}/users",
+        headers=auth_headers(str(owner["access_token"])),
+        json={"user_id": viewer["user"]["id"], "role": "VIEWER"},
+    )
+    admin_adds_target_response = await client.post(
+        f"/api/v1/companies/{company['id']}/users",
+        headers=auth_headers(str(admin["access_token"])),
+        json={"user_id": target["user"]["id"], "role": "OPERATOR"},
+    )
+    viewer_adds_target_response = await client.post(
+        f"/api/v1/companies/{company['id']}/users",
+        headers=auth_headers(str(viewer["access_token"])),
+        json={"user_id": target["user"]["id"], "role": "VIEWER"},
+    )
+
+    assert admin_add_response.status_code == 201
+    assert viewer_add_response.status_code == 201
+    assert admin_adds_target_response.status_code == 201
+    assert viewer_adds_target_response.status_code == 403
+
+
 async def test_add_company_user_rejects_duplicate_and_missing_user(client: AsyncClient) -> None:
     owner = await register_user(client)
     target = await register_user(client)

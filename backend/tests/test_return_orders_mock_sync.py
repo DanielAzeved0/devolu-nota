@@ -42,7 +42,13 @@ async def register_user(client: AsyncClient) -> dict[str, object]:
         json={"email": email, "name": "Test User", "password": "strong-pass"},
     )
     assert register_response.status_code == 201
-    return register_response.json()
+    tokens = register_response.json()
+    me_response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert me_response.status_code == 200
+    return {**tokens, "user": me_response.json()}
 
 
 def auth_headers(access_token: str) -> dict[str, str]:
@@ -61,6 +67,22 @@ async def create_company(client: AsyncClient, access_token: str) -> dict[str, ob
     )
     assert response.status_code == 201
     return response.json()
+
+
+async def add_company_user(
+    client: AsyncClient,
+    *,
+    owner_access_token: str,
+    company_id: str,
+    user_id: str,
+    role: str,
+) -> None:
+    response = await client.post(
+        f"/api/v1/companies/{company_id}/users",
+        headers=auth_headers(owner_access_token),
+        json={"user_id": user_id, "role": role},
+    )
+    assert response.status_code == 201
 
 
 async def list_return_orders(company_id: str) -> list[ReturnOrder]:
@@ -224,6 +246,46 @@ async def test_sync_mock_returns_denies_cross_tenant_access(client: AsyncClient)
 
     assert response.status_code == 404
     assert await list_return_orders(str(company["id"])) == []
+
+
+async def test_sync_mock_returns_requires_operator_role(client: AsyncClient) -> None:
+    owner = await register_user(client)
+    operator = await register_user(client)
+    viewer = await register_user(client)
+    company = await create_company(client, str(owner["access_token"]))
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(operator["user"]["id"]),
+        role="OPERATOR",
+    )
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(viewer["user"]["id"]),
+        role="VIEWER",
+    )
+
+    operator_response = await sync_mock_returns(
+        client,
+        access_token=str(operator["access_token"]),
+        company_id=str(company["id"]),
+        marketplace="MERCADO_LIVRE",
+    )
+    viewer_response = await sync_mock_returns(
+        client,
+        access_token=str(viewer["access_token"]),
+        company_id=str(company["id"]),
+        marketplace="SHOPEE",
+    )
+
+    assert operator_response.status_code == 200
+    assert viewer_response.status_code == 403
+    stored_return_orders = await list_return_orders(str(company["id"]))
+    assert len(stored_return_orders) == 1
+    assert stored_return_orders[0].marketplace == "MERCADO_LIVRE"
 
 
 @pytest.mark.parametrize(

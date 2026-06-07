@@ -44,9 +44,15 @@ async def register_user(client: AsyncClient) -> dict[str, object]:
     )
     assert register_response.status_code == 201
     tokens = register_response.json()
+    me_response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert me_response.status_code == 200
     return {
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
+        "user": me_response.json(),
     }
 
 
@@ -66,6 +72,22 @@ async def create_company(client: AsyncClient, access_token: str) -> dict[str, ob
     )
     assert response.status_code == 201
     return response.json()
+
+
+async def add_company_user(
+    client: AsyncClient,
+    *,
+    owner_access_token: str,
+    company_id: str,
+    user_id: str,
+    role: str,
+) -> None:
+    response = await client.post(
+        f"/api/v1/companies/{company_id}/users",
+        headers=auth_headers(owner_access_token),
+        json={"user_id": user_id, "role": role},
+    )
+    assert response.status_code == 201
 
 
 async def create_integration(
@@ -215,6 +237,62 @@ async def test_update_integration_status_settings_and_credentials(client: AsyncC
     assert api_token not in str(stored_integration.encrypted_credentials)
     decrypted_credentials = decrypt_integration_credentials(stored_integration.encrypted_credentials)
     assert decrypted_credentials["api_token"] == api_token
+
+
+async def test_integration_mutations_require_admin_role(client: AsyncClient) -> None:
+    owner = await register_user(client)
+    admin = await register_user(client)
+    operator = await register_user(client)
+    viewer = await register_user(client)
+    company = await create_company(client, str(owner["access_token"]))
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(admin["user"]["id"]),
+        role="ADMIN",
+    )
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(operator["user"]["id"]),
+        role="OPERATOR",
+    )
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(viewer["user"]["id"]),
+        role="VIEWER",
+    )
+
+    admin_create_response = await client.post(
+        f"/api/v1/companies/{company['id']}/integrations",
+        headers=auth_headers(str(admin["access_token"])),
+        json={"provider": "TINY", "settings": {"sync_interval_minutes": 30}},
+    )
+    integration_id = admin_create_response.json()["id"]
+    operator_credentials_response = await client.put(
+        f"/api/v1/companies/{company['id']}/integrations/{integration_id}/credentials",
+        headers=auth_headers(str(operator["access_token"])),
+        json={"api_token": "operator-token"},
+    )
+    viewer_create_response = await client.post(
+        f"/api/v1/companies/{company['id']}/integrations",
+        headers=auth_headers(str(viewer["access_token"])),
+        json={"provider": "SHOPEE"},
+    )
+    viewer_list_response = await client.get(
+        f"/api/v1/companies/{company['id']}/integrations",
+        headers=auth_headers(str(viewer["access_token"])),
+    )
+
+    assert admin_create_response.status_code == 201
+    assert operator_credentials_response.status_code == 403
+    assert viewer_create_response.status_code == 403
+    assert viewer_list_response.status_code == 200
+    assert integration_id in [item["id"] for item in viewer_list_response.json()]
 
 
 async def test_integration_routes_deny_cross_tenant_access(client: AsyncClient) -> None:

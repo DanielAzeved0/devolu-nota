@@ -44,7 +44,13 @@ async def register_user(client: AsyncClient) -> dict[str, object]:
         json={"email": email, "name": "Test User", "password": "strong-pass"},
     )
     assert register_response.status_code == 201
-    return register_response.json()
+    tokens = register_response.json()
+    me_response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert me_response.status_code == 200
+    return {**tokens, "user": me_response.json()}
 
 
 def auth_headers(access_token: str) -> dict[str, str]:
@@ -63,6 +69,22 @@ async def create_company(client: AsyncClient, access_token: str) -> dict[str, ob
     )
     assert response.status_code == 201
     return response.json()
+
+
+async def add_company_user(
+    client: AsyncClient,
+    *,
+    owner_access_token: str,
+    company_id: str,
+    user_id: str,
+    role: str,
+) -> None:
+    response = await client.post(
+        f"/api/v1/companies/{company_id}/users",
+        headers=auth_headers(owner_access_token),
+        json={"user_id": user_id, "role": role},
+    )
+    assert response.status_code == 201
 
 
 async def sync_return_order(
@@ -188,6 +210,55 @@ async def test_create_mock_emission_batch_creates_jobs_and_queues_notes(
     stored_note = await get_return_note(str(note["id"]))
     assert stored_note is not None
     assert stored_note.status == "QUEUED"
+
+
+async def test_create_mock_emission_batch_requires_operator_role(client: AsyncClient) -> None:
+    owner = await register_user(client)
+    operator = await register_user(client)
+    viewer = await register_user(client)
+    company = await create_company(client, str(owner["access_token"]))
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(operator["user"]["id"]),
+        role="OPERATOR",
+    )
+    await add_company_user(
+        client,
+        owner_access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        user_id=str(viewer["user"]["id"]),
+        role="VIEWER",
+    )
+    first_note = await create_return_note(
+        client,
+        access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        marketplace="MERCADO_LIVRE",
+    )
+    second_note = await create_return_note(
+        client,
+        access_token=str(owner["access_token"]),
+        company_id=str(company["id"]),
+        marketplace="SHOPEE",
+    )
+
+    operator_response = await create_mock_batch(
+        client,
+        access_token=str(operator["access_token"]),
+        company_id=str(company["id"]),
+        return_note_ids=[str(first_note["id"])],
+    )
+    viewer_response = await create_mock_batch(
+        client,
+        access_token=str(viewer["access_token"]),
+        company_id=str(company["id"]),
+        return_note_ids=[str(second_note["id"])],
+    )
+
+    assert operator_response.status_code == 201
+    assert viewer_response.status_code == 403
 
 
 async def test_get_batch_and_list_jobs_respect_tenant_boundary(client: AsyncClient) -> None:

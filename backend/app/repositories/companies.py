@@ -52,6 +52,14 @@ class CompanyRepository:
         )
         return list(result.scalars().all())
 
+    async def list_active_company_ids(self) -> list[UUID]:
+        result = await self.session.execute(
+            select(Company.id)
+            .where(Company.status == "ACTIVE")
+            .order_by(Company.created_at.asc())
+        )
+        return list(result.scalars().all())
+
 
 class CompanyUserRepository:
     def __init__(self, session: AsyncSession) -> None:

@@ -7,7 +7,7 @@ from app.schemas.integrations import (
     IntegrationCredentialsRequest,
     IntegrationUpdateRequest,
 )
-from app.services.companies import CompanyService
+from app.services.companies import COMPANY_ADMIN_ROLES, CompanyService
 from app.services.integration_credentials import encrypt_integration_credentials
 
 
@@ -31,7 +31,11 @@ class IntegrationService:
         payload: IntegrationCreateRequest,
         current_user: User,
     ) -> Integration:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_ADMIN_ROLES,
+        )
         encrypted_credentials = (
             encrypt_integration_credentials(payload.credentials.to_sensitive_dict())
             if payload.credentials is not None
@@ -72,6 +76,11 @@ class IntegrationService:
         payload: IntegrationUpdateRequest,
         current_user: User,
     ) -> Integration:
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_ADMIN_ROLES,
+        )
         integration = await self.get_integration(
             company_id=company_id,
             integration_id=integration_id,
@@ -91,6 +100,11 @@ class IntegrationService:
         payload: IntegrationCredentialsRequest,
         current_user: User,
     ) -> Integration:
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_ADMIN_ROLES,
+        )
         integration = await self.get_integration(
             company_id=company_id,
             integration_id=integration_id,

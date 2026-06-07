@@ -18,6 +18,7 @@ from app.schemas.companies import (
 from app.services.companies import (
     CompanyDocumentAlreadyExistsError,
     CompanyNotFoundError,
+    CompanyPermissionDeniedError,
     CompanyService,
     CompanyUserAlreadyExistsError,
     UserNotFoundError,
@@ -125,6 +126,9 @@ async def add_company_user(
     except CompanyNotFoundError:
         await session.rollback()
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
     except UserNotFoundError:
         await session.rollback()
         raise not_found("User not found") from None
@@ -144,3 +148,7 @@ def not_found(detail: str) -> HTTPException:
 
 def conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def forbidden(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)

@@ -4,7 +4,7 @@ from app.models import ReturnNote, User
 from app.repositories.return_notes import ReturnNoteRepository
 from app.repositories.return_orders import ReturnOrderRepository
 from app.schemas.return_notes import ReturnNoteMockCreateRequest
-from app.services.companies import CompanyService
+from app.services.companies import COMPANY_OPERATOR_ROLES, CompanyService
 from app.services.mock_integrations import MockIntegrationService
 
 
@@ -42,7 +42,11 @@ class ReturnNoteMockCreationService:
         payload: ReturnNoteMockCreateRequest,
         current_user: User,
     ) -> ReturnNote:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_OPERATOR_ROLES,
+        )
         return_order = await self.return_orders.get_by_company_id(
             company_id=company_id,
             return_order_id=return_order_id,

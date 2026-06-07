@@ -10,4 +10,5 @@ out/
 dist/
 coverage/
 *.log
+backend/.local-storage/
 

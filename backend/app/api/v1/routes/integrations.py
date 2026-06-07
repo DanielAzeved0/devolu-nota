@@ -15,7 +15,7 @@ from app.schemas.integrations import (
     IntegrationPublic,
     IntegrationUpdateRequest,
 )
-from app.services.companies import CompanyNotFoundError, CompanyService
+from app.services.companies import CompanyNotFoundError, CompanyPermissionDeniedError, CompanyService
 from app.services.integrations import IntegrationNotFoundError, IntegrationService
 
 router = APIRouter(prefix="/api/v1/companies/{company_id}/integrations", tags=["integrations"])
@@ -57,6 +57,9 @@ async def create_integration(
     except CompanyNotFoundError:
         await session.rollback()
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
 
     return IntegrationPublic.model_validate(integration)
 
@@ -125,6 +128,9 @@ async def update_integration(
     except (CompanyNotFoundError, IntegrationNotFoundError):
         await session.rollback()
         raise not_found("Integration not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
 
     return IntegrationPublic.model_validate(integration)
 
@@ -154,9 +160,16 @@ async def replace_integration_credentials(
     except (CompanyNotFoundError, IntegrationNotFoundError):
         await session.rollback()
         raise not_found("Integration not found") from None
+    except CompanyPermissionDeniedError:
+        await session.rollback()
+        raise forbidden("Insufficient company role") from None
 
     return IntegrationPublic.model_validate(integration)
 
 
 def not_found(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+def forbidden(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)

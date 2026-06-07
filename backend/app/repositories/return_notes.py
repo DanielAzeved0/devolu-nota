@@ -34,6 +34,20 @@ class ReturnNoteRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_company_id(
+        self,
+        *,
+        company_id: UUID,
+        return_note_id: UUID,
+    ) -> ReturnNote | None:
+        result = await self.session.execute(
+            select(ReturnNote).where(
+                ReturnNote.id == return_note_id,
+                ReturnNote.company_id == company_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create_mock_draft(
         self,
         *,

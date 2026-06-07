@@ -6,7 +6,7 @@ from app.repositories.audit_logs import AuditLogRepository
 from app.repositories.emissions import EmissionRepository
 from app.schemas.emissions import EmissionBatchMockCreateRequest, MockEmissionScenario
 from app.services.audit_logs import AuditLogService
-from app.services.companies import CompanyService
+from app.services.companies import COMPANY_OPERATOR_ROLES, CompanyService
 
 ELIGIBLE_RETURN_NOTE_STATUSES = ("DRAFT", "READY_TO_EMIT")
 FINAL_BATCH_STATUSES = ("COMPLETED", "FAILED", "CANCELLED")
@@ -47,7 +47,11 @@ class EmissionBatchMockService:
         payload: EmissionBatchMockCreateRequest,
         current_user: User,
     ) -> tuple[EmissionBatch, list[EmissionJob]]:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_OPERATOR_ROLES,
+        )
 
         return_notes = await self.emissions.list_return_notes_for_update(
             company_id=company_id,
