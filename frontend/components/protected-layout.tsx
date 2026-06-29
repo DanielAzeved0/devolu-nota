@@ -12,6 +12,7 @@ const navItems = [
   { href: "/app/integrations", label: "Conexoes" },
   { href: "/app/returns", label: "Devolucoes" },
   { href: "/app/emissions", label: "Emissoes" },
+  { href: "/app/documents", label: "Documentos" },
   { href: "/app/audit-logs", label: "Historico" }
 ];
 

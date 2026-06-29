@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -8,9 +9,13 @@ from sqlalchemy.exc import OperationalError
 
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
-from app.models import EmissionBatch, EmissionJob, ReturnNote
+from app.models import EmissionBatch, EmissionJob, FiscalDocument, ReturnNote
 from app.repositories.emissions import EmissionRepository
+from app.repositories.fiscal_documents import FiscalDocumentRepository
+from app.repositories.return_notes import ReturnNoteRepository
 from app.services.emissions import EmissionBatchInvalidStateError, EmissionBatchMockProcessor
+from app.services.fiscal_documents import FiscalDocumentStorageService
+from app.storage.local import LocalStorageProvider
 
 pytestmark = pytest.mark.asyncio
 
@@ -158,15 +163,39 @@ async def list_jobs(batch_id: str) -> list[EmissionJob]:
         return list(result.scalars().all())
 
 
-async def process_batch(*, company_id: str, batch_id: str, scenario: str = "success") -> None:
+async def process_batch(
+    *,
+    company_id: str,
+    batch_id: str,
+    scenario: str = "success",
+    storage_root: Path | str | None = None,
+) -> None:
     async with AsyncSessionLocal() as session:
-        processor = EmissionBatchMockProcessor(emissions=EmissionRepository(session))
+        fiscal_documents = None
+        if storage_root is not None:
+            fiscal_documents = FiscalDocumentStorageService(
+                fiscal_documents=FiscalDocumentRepository(session),
+                return_notes=ReturnNoteRepository(session),
+                storage=LocalStorageProvider(root_path=storage_root),
+            )
+        processor = EmissionBatchMockProcessor(
+            emissions=EmissionRepository(session),
+            fiscal_documents=fiscal_documents,
+        )
         await processor.process_batch(
             company_id=uuid.UUID(company_id),
             batch_id=uuid.UUID(batch_id),
             scenario=scenario,  # type: ignore[arg-type]
         )
         await session.commit()
+
+
+async def list_fiscal_documents(return_note_id: str) -> list[FiscalDocument]:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(FiscalDocument).where(FiscalDocument.return_note_id == uuid.UUID(return_note_id))
+        )
+        return list(result.scalars().all())
 
 
 def assert_payload_has_no_secrets(payload: object) -> None:
@@ -386,7 +415,10 @@ async def test_create_mock_emission_batch_rejects_cross_tenant_and_non_eligible_
     assert queued_note_response.status_code == 409
 
 
-async def test_process_mock_emission_batch_success_issues_notes(client: AsyncClient) -> None:
+async def test_process_mock_emission_batch_success_issues_notes(
+    client: AsyncClient,
+    tmp_path,
+) -> None:
     user = await register_user(client)
     company = await create_company(client, str(user["access_token"]))
     note = await create_return_note(
@@ -402,7 +434,11 @@ async def test_process_mock_emission_batch_success_issues_notes(client: AsyncCli
         return_note_ids=[str(note["id"])],
     )
 
-    await process_batch(company_id=str(company["id"]), batch_id=str(batch_response.json()["id"]))
+    await process_batch(
+        company_id=str(company["id"]),
+        batch_id=str(batch_response.json()["id"]),
+        storage_root=tmp_path,
+    )
 
     stored_batch = await get_batch(str(batch_response.json()["id"]))
     stored_note = await get_return_note(str(note["id"]))
@@ -415,6 +451,10 @@ async def test_process_mock_emission_batch_success_issues_notes(client: AsyncCli
     assert len(stored_note.return_nfe_key) == 44
     assert stored_note.issued_at is not None
     assert jobs[0].status == "SUCCESS"
+    documents = await list_fiscal_documents(str(note["id"]))
+    assert {document.document_type for document in documents} == {"NFE_XML", "DANFE_PDF"}
+    assert {document.status for document in documents} == {"AVAILABLE"}
+    assert {document.access_key for document in documents} == {stored_note.return_nfe_key}
 
 
 async def test_process_mock_emission_batch_failure_marks_jobs_and_notes_failed(

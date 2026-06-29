@@ -128,6 +128,27 @@ export type AuditLogListResponse = {
   offset: number;
 };
 
+export type FiscalDocumentPublic = {
+  id: string;
+  company_id: string;
+  return_note_id: string;
+  document_type: "NFE_XML" | "DANFE_PDF" | "TINY_JSON" | "SEFAZ_EVENT";
+  status: string;
+  access_key: string | null;
+  xml_storage_archive_id: string | null;
+  pdf_storage_archive_id: string | null;
+  issued_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FiscalDocumentListResponse = {
+  items: FiscalDocumentPublic[];
+  limit: number;
+  offset: number;
+};
+
 export type ApiError = {
   message: string;
   status?: number;

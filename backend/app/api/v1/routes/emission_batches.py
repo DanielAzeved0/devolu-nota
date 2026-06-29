@@ -100,6 +100,8 @@ async def get_emission_batch(
         )
     except (CompanyNotFoundError, EmissionBatchNotFoundError):
         raise not_found("Emission batch not found") from None
+    except CompanyPermissionDeniedError:
+        raise forbidden("Insufficient company role") from None
 
     return EmissionBatchPublic.model_validate(batch)
 
@@ -124,6 +126,8 @@ async def list_emission_batch_jobs(
         )
     except (CompanyNotFoundError, EmissionBatchNotFoundError):
         raise not_found("Emission batch not found") from None
+    except CompanyPermissionDeniedError:
+        raise forbidden("Insufficient company role") from None
 
     return EmissionJobListResponse(items=[EmissionJobPublic.model_validate(job) for job in jobs])
 

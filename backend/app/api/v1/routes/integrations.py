@@ -75,6 +75,8 @@ async def list_integrations(
         integrations = await service.list_integrations(company_id=company_id, current_user=current_user)
     except CompanyNotFoundError:
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        raise forbidden("Insufficient company role") from None
 
     return [IntegrationPublic.model_validate(integration) for integration in integrations]
 
@@ -99,6 +101,8 @@ async def get_integration(
         )
     except (CompanyNotFoundError, IntegrationNotFoundError):
         raise not_found("Integration not found") from None
+    except CompanyPermissionDeniedError:
+        raise forbidden("Insufficient company role") from None
 
     return IntegrationPublic.model_validate(integration)
 

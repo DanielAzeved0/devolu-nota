@@ -23,11 +23,16 @@ O runtime atual inclui:
 - autenticacao JWT com access token e refresh token;
 - hash de senha com bcrypt;
 - criptografia autenticada de credenciais sensiveis com AES-GCM;
+- autorizacao central por role de empresa;
 - rotas multi-tenant para empresas, usuarios vinculados e integracoes;
 - mocks isolados para Tiny, Mercado Livre e Shopee;
 - sincronizacao mockada de devolucoes de marketplace;
 - criacao mockada de nota fiscal de entrada de devolucao;
 - lotes e jobs de emissao mockada;
+- storage fiscal local para XML/DANFE mockados;
+- listagem e download de documentos fiscais armazenados;
+- politica de retencao baseada em `retention_until`;
+- job recorrente de retencao via APScheduler;
 - historico operacional em `audit_logs`;
 - frontend autenticado minimo para operar o fluxo mockado;
 - sanitizacao de erros de validacao para nao vazar payload sensivel;
@@ -48,6 +53,7 @@ Nao existe, nesta etapa:
 - **Autenticacao JWT**: registro, login, refresh token e endpoint `me`.
 - **Senhas seguras**: senhas sao persistidas apenas como hash bcrypt.
 - **Multi-tenant por empresa**: empresas sao acessadas somente por usuarios vinculados em `company_users`.
+- **Autorizacao por role**: leitura, operacao e administracao usam politica central em `CompanyService`.
 - **Criacao de empresa com OWNER automatico**: ao criar uma empresa, o usuario autenticado vira `OWNER`.
 - **Vinculo de usuarios a empresas**: usuarios existentes podem ser vinculados com roles `OWNER`, `ADMIN`, `OPERATOR` ou `VIEWER`.
 - **Integracoes por empresa**: cadastro, listagem, consulta e atualizacao de integracoes por `company_id`.
@@ -57,6 +63,10 @@ Nao existe, nesta etapa:
 - **Sincronizacao mockada de devolucoes**: devolucoes de marketplace sao persistidas com idempotencia por empresa, marketplace e pedido externo.
 - **Criacao mockada de nota de entrada**: o backend cruza devolucao com NF-e original simulada no Tiny e cria `return_notes` em `DRAFT`.
 - **Emissao mockada em lote**: o backend cria `emission_batches`, cria `emission_jobs`, move notas para `QUEUED` e processa cenarios mockados de sucesso ou falha.
+- **Documentos fiscais locais**: emissao mockada bem-sucedida gera XML e DANFE mockados, salva bytes em storage local e registra checksum.
+- **Download seguro de documentos**: documentos fiscais sao listados e baixados somente por usuarios vinculados a empresa.
+- **Retencao fiscal**: archives usam `retention_until`, podem ir para `COLD` ou `DELETED` e geram auditoria.
+- **Scheduler de retencao**: APScheduler roda ciclo periodico por empresas ativas e registra `retention_jobs`.
 - **Historico operacional**: eventos de emissao mockada sao registrados em `audit_logs` e expostos por rota multi-tenant.
 - **Frontend autenticado minimo**: login, cadastro, empresas, conexoes, devolucoes, emissoes e historico consomem a API existente.
 - **Erros 422 sanitizados**: payloads invalidos nao retornam `input` nem valores sensiveis.
@@ -98,8 +108,11 @@ flowchart TD
 13. Backend busca a NF-e original simulada no Tiny mock, cria `return_notes` em `DRAFT` e vincula o pedido a `LINKED_TO_NFE`.
 14. Usuario cria lote de emissao mockada em `POST /api/v1/companies/{company_id}/emission-batches/mock`.
 15. Backend cria um job por nota, move as notas para `QUEUED` e permite processamento mockado via service/task Celery.
-16. Backend registra eventos operacionais em `audit_logs`.
-17. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
+16. Processamento mockado bem-sucedido marca nota como `ISSUED`, cria chave de devolucao mockada e armazena XML/DANFE em storage local.
+17. Usuario lista documentos em `GET /api/v1/companies/{company_id}/fiscal-documents` e baixa conteudo validado por checksum.
+18. Admin aplica retencao manual em `POST /api/v1/companies/{company_id}/retention/apply`, ou o scheduler executa o ciclo recorrente.
+19. Backend registra eventos operacionais em `audit_logs`.
+20. API publica nunca retorna `password_hash`, tokens ou `encrypted_credentials`.
 
 ## API
 
@@ -588,11 +601,96 @@ O processamento e implementado em service isolado e exposto por wrapper Celery `
 
 Efeitos por scenario:
 
-- `success`: lote `COMPLETED`, jobs `SUCCESS`, notas `ISSUED`, `return_nfe_key` mockada e `issued_at` preenchido.
+- `success`: lote `COMPLETED`, jobs `SUCCESS`, notas `ISSUED`, `return_nfe_key` mockada, `issued_at` preenchido, XML e DANFE mockados salvos no storage local.
 - `failure`: lote `FAILED`, jobs `FAILED`, notas `FAILED` e mensagens de erro controladas.
 - `partial_failure`: lote `FAILED`, mistura de jobs `SUCCESS` e `FAILED`.
 
-Esta etapa nao emite NF-e real, nao chama Tiny real, nao chama SEFAZ e nao gera XML/DANFE real.
+Esta etapa nao emite NF-e real, nao chama Tiny real, nao chama SEFAZ e nao gera XML/DANFE real. Os arquivos salvos sao artefatos mockados para validar storage, checksum, download, auditoria e retencao.
+
+### Documentos Fiscais
+
+Documentos fiscais ficam aninhados por empresa e exigem access token. Todas as roles ativas da empresa podem consultar e baixar documentos; o backend sempre valida `company_id`.
+
+#### Listar documentos fiscais
+
+```http
+GET /api/v1/companies/{company_id}/fiscal-documents
+Authorization: Bearer <access_token>
+```
+
+Filtros opcionais:
+
+- `return_note_id`
+- `limit`, default `50`, maximo `100`
+- `offset`, default `0`
+
+Resposta:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "return_note_id": "uuid",
+      "document_type": "NFE_XML",
+      "status": "PENDING",
+      "access_key": "35260612345678000199550010000010011000010010",
+      "xml_storage_archive_id": "uuid",
+      "pdf_storage_archive_id": null,
+      "issued_at": "2026-06-04T00:00:00",
+      "cancelled_at": null,
+      "created_at": "2026-06-04T00:00:00",
+      "updated_at": "2026-06-04T00:00:00"
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Tipos atualmente armazenados pelo fluxo mockado:
+
+- `NFE_XML`
+- `DANFE_PDF`
+
+#### Baixar documento fiscal
+
+```http
+GET /api/v1/companies/{company_id}/fiscal-documents/{fiscal_document_id}/download
+Authorization: Bearer <access_token>
+```
+
+O backend le o objeto no storage local, recalcula o SHA-256 e retorna `409` se o checksum nao bater. Recurso inexistente ou de outra empresa retorna `404`.
+
+### Retencao
+
+Retencao usa `storage_archives.retention_until` e exige role administrativa (`OWNER` ou `ADMIN`) quando acionada via API.
+
+#### Aplicar retencao manual
+
+```http
+POST /api/v1/companies/{company_id}/retention/apply
+Authorization: Bearer <access_token>
+```
+
+Resposta:
+
+```json
+{
+  "moved_to_cold": 1,
+  "moved_to_deleted": 0,
+  "skipped": 0
+}
+```
+
+Politica atual:
+
+- `COLD`: archives ativos com `retention_until` vencido.
+- `DELETED`: archives em `COLD` cujo `retention_until` venceu ha pelo menos mais 5 anos.
+- parametros padrao: `cold_after_years = 5`, `delete_after_years = 10`.
+
+Transicoes de retencao registram auditoria com status anterior, novo status, motivo, cutoff, `retention_until` e politica aplicada.
 
 ### Historico Operacional
 
@@ -651,6 +749,8 @@ Eventos registrados:
 - `RETURN_NOTE_FAILED`
 - `EMISSION_BATCH_COMPLETED`
 - `EMISSION_BATCH_FAILED`
+- `STORAGE_ARCHIVE_MOVED_TO_COLD`
+- `STORAGE_ARCHIVE_DELETED_BY_RETENTION`
 
 Logs iniciados por rota autenticada preservam `user_id`. Logs do processamento assincrono podem ter `user_id` nulo. Metadata com chaves sensiveis como `access_token`, `refresh_token`, `api_token`, `client_secret`, `encrypted_credentials`, `password`, `password_hash` ou `secret` e rejeitada.
 
@@ -680,6 +780,7 @@ Indices relevantes foram criados para campos como:
 - `marketplace`
 - `external_order_id`
 - `original_nfe_key`
+- `retention_until`
 
 Constraints importantes:
 
@@ -699,8 +800,13 @@ Regras aplicadas:
 - Rotas sensiveis exigem access token.
 - Refresh token nao autoriza rotas protegidas.
 - Acesso multi-tenant e validado no backend.
+- Mutacoes sensiveis usam roles da empresa:
+  - `OWNER` e `ADMIN`: administracao, usuarios, integracoes, credenciais e retencao manual.
+  - `OPERATOR`: operacoes como sync de devolucoes, criacao de notas e emissao mockada.
+  - `VIEWER`: leitura.
 - Erros 422 sao sanitizados para remover `input`, `ctx` e `url`.
 - Credenciais nao aparecem em responses publicas.
+- Conteudo fiscal bruto nao deve ser logado.
 
 Variaveis sensiveis nunca devem ser commitadas com valores reais.
 
@@ -717,6 +823,7 @@ Arquivos principais atuais:
 - `frontend/app/(protected)/app/integrations/page.tsx`: conexoes mockadas;
 - `frontend/app/(protected)/app/returns/page.tsx`: sincronizacao de devolucoes e criacao de nota mockada;
 - `frontend/app/(protected)/app/emissions/page.tsx`: criacao de lote de emissao mockada;
+- `frontend/app/(protected)/app/documents/page.tsx`: listagem e download de XML/DANFE mockados;
 - `frontend/app/(protected)/app/audit-logs/page.tsx`: historico operacional;
 - `frontend/app/layout.tsx`: layout base;
 - `frontend/app/globals.css`: estilos globais;
@@ -737,6 +844,7 @@ http://localhost:3000/app/companies
 http://localhost:3000/app/integrations
 http://localhost:3000/app/returns
 http://localhost:3000/app/emissions
+http://localhost:3000/app/documents
 http://localhost:3000/app/audit-logs
 ```
 
@@ -748,7 +856,9 @@ Fluxo manual recomendado:
 4. Sincronizar devolucoes em `/app/returns`.
 5. Criar nota mockada para uma devolucao.
 6. Criar lote mockado em `/app/emissions`.
-7. Ver eventos em `/app/audit-logs`.
+7. Processar o lote pelo worker/service mockado.
+8. Baixar XML/DANFE mockados em `/app/documents`.
+9. Ver eventos em `/app/audit-logs`.
 
 ## Estrutura de Pastas
 
@@ -769,9 +879,11 @@ backend/
           audit_logs.py
           auth.py
           companies.py
+          fiscal_documents.py
           health.py
           integrations.py
           emission_batches.py
+          retention.py
           return_orders.py
     core/
       config.py
@@ -798,9 +910,12 @@ backend/
       companies.py
       integrations.py
       emissions.py
+      fiscal_documents.py
       return_notes.py
       return_orders.py
       users.py
+      retention.py
+      retention_jobs.py
     schemas/
       audit_logs.py
       auth.py
@@ -808,7 +923,9 @@ backend/
       health.py
       integrations.py
       emissions.py
+      fiscal_documents.py
       mock_integrations.py
+      retention.py
       return_notes.py
       return_orders.py
     services/
@@ -818,9 +935,13 @@ backend/
       integration_credentials.py
       integrations.py
       emissions.py
+      fiscal_documents.py
       mock_integrations.py
+      retention.py
       return_notes.py
       return_orders.py
+    storage/
+      local.py
     workers/
       celery_app.py
       tasks.py
@@ -828,14 +949,19 @@ backend/
     test_auth.py
     test_audit_logs.py
     test_companies.py
+    test_company_role_authorization.py
     test_domain_models.py
     test_encryption.py
+    test_fiscal_documents_storage.py
     test_health.py
     test_integrations.py
+    test_local_storage.py
     test_emission_batches_mock.py
     test_mock_integrations.py
+    test_retention.py
     test_return_notes_mock_creation.py
     test_return_orders_mock_sync.py
+    test_scheduler.py
   pyproject.toml
 
 frontend/
@@ -845,6 +971,7 @@ frontend/
         audit-logs/
         companies/
         emissions/
+        documents/
         integrations/
         returns/
     login/
@@ -1025,6 +1152,8 @@ Notas:
 - `JWT_SECRET_KEY` deve ser forte fora de ambiente local.
 - `ENCRYPTION_KEY` deve decodificar para 32 bytes em base64/url-safe base64.
 - `DATABASE_URL` dentro do Docker aponta para `postgres`; localmente pode apontar para `localhost`.
+- O provider local atual salva objetos em `.local-storage` relativo ao processo do backend; no Compose isso corresponde a `backend/.local-storage/`, ignorado pelo git.
+- As variaveis `STORAGE_*` permanecem no contrato de ambiente para futura troca por storage externo.
 - Segredos reais nao devem ir para commits.
 
 ## Testes
@@ -1043,11 +1172,16 @@ Cobertura existente:
 - `test_auth.py`: registro, login, tokens, refresh, usuario inativo e rota protegida.
 - `test_encryption.py`: AES-GCM, payload invalido, chave invalida e schema publico.
 - `test_companies.py`: empresas, vinculos, acesso cross-tenant e vinculo inativo.
+- `test_company_role_authorization.py`: matriz de permissoes por role para usuarios, integracoes, emissao, documentos e retencao.
 - `test_integrations.py`: integracoes, credenciais criptografadas, settings seguros e isolamento multi-tenant.
 - `test_emission_batches_mock.py`: criacao de lotes, jobs, status de notas, isolamento multi-tenant e processamento mockado.
+- `test_fiscal_documents_storage.py`: criacao, listagem, download, checksum e isolamento de documentos fiscais.
+- `test_local_storage.py`: provider local, validacao de bucket/object key, path traversal e leitura/escrita.
 - `test_mock_integrations.py`: clients mockados de Tiny, Mercado Livre e Shopee, erros controlados e ausencia de segredos.
+- `test_retention.py`: transicoes para `COLD`/`DELETED`, uso de `retention_until`, idempotencia e auditoria.
 - `test_return_orders_mock_sync.py`: sincronizacao mockada de devolucoes, idempotencia e isolamento multi-tenant.
 - `test_return_notes_mock_creation.py`: criacao mockada de nota de entrada, vinculo com NF-e original simulada, duplicidade e erros do Tiny mock.
+- `test_scheduler.py`: ciclo de retencao recorrente e configuracao do APScheduler.
 
 Os testes de API usam PostgreSQL local real quando disponivel. Se o banco nao estiver acessivel, testes dependentes de banco podem ser pulados por fixture.
 
@@ -1065,8 +1199,9 @@ Estado atual:
 
 - `GET /health` valida disponibilidade basica da API.
 - Redis esta preparado no Compose.
-- Celery worker esta preparado em `backend/app/workers`.
-- APScheduler esta preparado em `backend/app/jobs/scheduler.py`.
+- Celery worker executa `health.ping` e `emissions.process_mock_batch`.
+- APScheduler executa ciclo recorrente de retencao a cada 5 minutos em `America/Sao_Paulo`.
+- `retention_jobs` registra execucao, conclusao e falha do ciclo de retencao por empresa.
 
 Ainda nao existem metricas historicas, tracing distribuido ou logs estruturados consolidados.
 
@@ -1076,21 +1211,25 @@ Ainda nao existem metricas historicas, tracing distribuido ou logs estruturados 
 - Frontend nao deve decidir acesso a recurso; no maximo melhora UX.
 - `company_id` e fronteira obrigatoria de tenant em dados operacionais.
 - Rotas de empresas e integracoes retornam `404` para recursos inacessiveis, reduzindo exposicao de existencia entre tenants.
+- Rotas com recurso fiscal tambem devem responder sem vazar existencia cross-tenant.
 - `settings` e somente para dados nao sensiveis.
 - Credenciais externas pertencem a `encrypted_credentials`.
+- Documentos fiscais pertencem ao storage boundary; rotas e services nunca devem manipular paths diretamente.
+- `retention_until` e a base da politica de retencao, nao `created_at`.
 - Integracoes reais so devem ser adicionadas depois de clients isolados, tratamento de erro, timeout, idempotencia e testes adequados.
 - Regra fiscal nao deve ficar dentro de rotas.
 - Nenhum fluxo deve implementar estoque.
 
 ## Status Atual
 
-Status: base backend funcional em desenvolvimento local.
+Status: MVP tecnico mockado funcional em desenvolvimento local.
 
 Ja implementado:
 
 - Auth JWT;
 - bcrypt para senha;
 - AES-GCM para credenciais;
+- autorizacao por role de empresa;
 - models SQLAlchemy principais;
 - migrations Alembic iniciais;
 - rotas de empresas e usuarios vinculados;
@@ -1101,7 +1240,14 @@ Ja implementado:
 - criacao mockada de nota de entrada em `DRAFT`;
 - lotes e jobs de emissao mockada;
 - processamento mockado de emissao via service e wrapper Celery;
+- storage local de XML/DANFE mockados com checksum SHA-256;
+- rotas de listagem e download de documentos fiscais;
+- tela frontend de documentos fiscais;
+- retencao por `retention_until` com transicoes `COLD` e `DELETED`;
+- rota manual de retencao para `OWNER`/`ADMIN`;
+- scheduler periodico de retencao com `retention_jobs`;
 - historico operacional de eventos de emissao em `audit_logs`;
+- auditoria de transicoes de retencao;
 - frontend autenticado minimo;
 - testes reais de API e banco;
 
@@ -1111,7 +1257,7 @@ Ainda nao implementado:
 - conexao real com Mercado Livre;
 - conexao real com Shopee;
 - emissao real em lote;
-- armazenamento real de XML/DANFE em S3/R2/B2/Wasabi;
+- armazenamento externo de XML/DANFE em S3/R2/B2/Wasabi;
 - cold storage real;
 - frontend completo de producao.
 
@@ -1119,13 +1265,14 @@ Ainda nao implementado:
 
 Proximos passos sugeridos:
 
-1. Criar auditoria para mudancas sensiveis fora do fluxo de emissao.
+1. Criar auditoria para mudancas sensiveis fora dos fluxos de emissao e retencao.
 2. Melhorar frontend com listagens persistidas de notas/devolucoes quando o backend expuser endpoints dedicados.
-3. Implementar storage abstraction para documentos fiscais.
-4. Implementar cold storage e politica de retencao.
+3. Extrair interface formal de storage para permitir S3/R2/B2/Wasabi sem acoplar services ao provider local.
+4. Implementar cold storage externo real e politica operacional de exclusao fisica.
 5. Criar fluxo real de busca de devolucoes com idempotencia.
 6. Criar fluxo real de cruzamento com NF-e original.
 7. Adicionar integracoes reais com Tiny, Mercado Livre e Shopee apos mocks e testes.
 8. Evoluir emissao real em lote somente apos validacao fiscal e contratos reais do Tiny.
+9. Migrar sessao frontend para estrategia mais segura antes de producao.
 
 ATENCAO: qualquer decisao fiscal precisa ser validada com contador ou especialista fiscal antes de uso em producao.

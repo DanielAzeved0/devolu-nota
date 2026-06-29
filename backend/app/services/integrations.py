@@ -7,7 +7,7 @@ from app.schemas.integrations import (
     IntegrationCredentialsRequest,
     IntegrationUpdateRequest,
 )
-from app.services.companies import COMPANY_ADMIN_ROLES, CompanyService
+from app.services.companies import COMPANY_ADMIN_ROLES, COMPANY_READER_ROLES, CompanyService
 from app.services.integration_credentials import encrypt_integration_credentials
 
 
@@ -49,7 +49,11 @@ class IntegrationService:
         )
 
     async def list_integrations(self, *, company_id: UUID, current_user: User) -> list[Integration]:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_READER_ROLES,
+        )
         return await self.integrations.list_by_company(company_id)
 
     async def get_integration(
@@ -59,7 +63,11 @@ class IntegrationService:
         integration_id: UUID,
         current_user: User,
     ) -> Integration:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_READER_ROLES,
+        )
         integration = await self.integrations.get_by_company(
             company_id=company_id,
             integration_id=integration_id,

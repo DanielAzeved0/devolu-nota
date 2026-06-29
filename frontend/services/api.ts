@@ -4,6 +4,7 @@ import type {
   AuthTokens,
   CompanyPublic,
   EmissionBatchCreatedResponse,
+  FiscalDocumentListResponse,
   HealthResponse,
   IntegrationPublic,
   MarketplaceProvider,
@@ -189,4 +190,40 @@ export function listAuditLogs(
     token,
     query
   });
+}
+
+export function listFiscalDocuments(
+  token: string,
+  companyId: string,
+  query: { return_note_id?: string; limit?: number; offset?: number } = {}
+) {
+  return apiRequest<FiscalDocumentListResponse>(
+    `/api/v1/companies/${companyId}/fiscal-documents`,
+    { token, query }
+  );
+}
+
+export async function downloadFiscalDocument(
+  token: string,
+  companyId: string,
+  fiscalDocumentId: string
+): Promise<Blob> {
+  const response = await fetch(
+    `${apiBaseUrl}/api/v1/companies/${companyId}/fiscal-documents/${fiscalDocumentId}/download`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) {
+    throw new ApiRequestError({
+      status: response.status,
+      message: await parseErrorMessage(response)
+    });
+  }
+
+  return response.blob();
 }

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.models import AuditLog, User
 from app.repositories.audit_logs import AuditLogRepository
-from app.services.companies import CompanyService
+from app.services.companies import COMPANY_READER_ROLES, CompanyService
 
 SENSITIVE_AUDIT_KEYS = {
     "access_token",
@@ -68,7 +68,11 @@ class AuditLogService:
     ) -> list[AuditLog]:
         if self.companies is None:
             raise RuntimeError("CompanyService is required to list audit logs")
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_READER_ROLES,
+        )
         return await self.audit_logs.list_for_company(
             company_id=company_id,
             entity_type=entity_type,

@@ -5,6 +5,10 @@ from app.repositories.companies import CompanyRepository, CompanyUserRepository
 from app.repositories.users import UserRepository
 from app.schemas.companies import CompanyCreateRequest, CompanyUserCreateRequest, CompanyUserPublic
 
+# Politica de autorizacao por empresa:
+# - COMPANY_READER_ROLES: leitura (devolucoes, notas, lotes, documentos, auditoria, usuarios).
+# - COMPANY_OPERATOR_ROLES: mutacoes operacionais (sync, notas, emissao).
+# - COMPANY_ADMIN_ROLES: gestao sensivel (usuarios, integracoes, credenciais, retencao manual).
 COMPANY_ADMIN_ROLES = ("OWNER", "ADMIN")
 COMPANY_OPERATOR_ROLES = ("OWNER", "ADMIN", "OPERATOR")
 COMPANY_READER_ROLES = ("OWNER", "ADMIN", "OPERATOR", "VIEWER")
@@ -87,7 +91,11 @@ class CompanyService:
     async def list_company_users(
         self, *, company_id: UUID, current_user: User
     ) -> list[CompanyUserPublic]:
-        await self.get_company(company_id=company_id, current_user=current_user)
+        await self.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_READER_ROLES,
+        )
         rows = await self.company_users.list_company_users(company_id)
         return [self._to_public_membership(membership, user) for membership, user in rows]
 

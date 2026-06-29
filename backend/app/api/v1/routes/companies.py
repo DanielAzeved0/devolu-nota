@@ -101,6 +101,8 @@ async def list_company_users(
         return await service.list_company_users(company_id=company_id, current_user=current_user)
     except CompanyNotFoundError:
         raise not_found("Company not found") from None
+    except CompanyPermissionDeniedError:
+        raise forbidden("Insufficient company role") from None
 
 
 @router.post(

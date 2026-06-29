@@ -14,6 +14,11 @@ Ele deve orientar os proximos agentes/desenvolvedores sobre o que melhorar e em 
 - Backend: FastAPI, SQLAlchemy async, PostgreSQL, Alembic, Redis, Celery e APScheduler.
 - Frontend: Next.js, React, TypeScript e chamadas para API.
 - Docker Compose: `postgres`, `redis`, `backend`, `worker`, `scheduler`, `frontend`.
+- Autorizacao por role ja existe em `CompanyService.require_company_role`.
+- Storage fiscal local ja existe em `backend/app/storage/local.py`.
+- Emissao mockada bem-sucedida ja salva XML/DANFE mockados e registra `FiscalDocument`/`StorageArchive`.
+- Retencao ja usa `retention_until`, tem rota manual e scheduler recorrente.
+- Frontend ja possui tela de documentos fiscais em `/app/documents`.
 - Backend organizado em:
   - `routes`: HTTP.
   - `schemas`: contratos Pydantic.
@@ -21,7 +26,29 @@ Ele deve orientar os proximos agentes/desenvolvedores sobre o que melhorar e em 
   - `repositories`: persistencia.
   - `models`: entidades SQLAlchemy.
   - `integrations`: mocks externos.
+  - `storage`: boundary local para documentos fiscais.
   - `workers`: tarefas Celery.
+
+## Status das prioridades
+
+Concluido para MVP tecnico:
+
+- Autorizacao por role para leitura, operacao e administracao.
+- Storage fiscal local com escrita, leitura, validacao de path e checksum.
+- Registro de XML/DANFE mockados em emissao mockada bem-sucedida.
+- Listagem e download de documentos fiscais com isolamento por empresa.
+- Retencao baseada em `retention_until`.
+- Auditoria de transicoes de emissao e retencao.
+- Scheduler recorrente de retencao com `retention_jobs`.
+
+Ainda pendente para producao:
+
+- Storage externo real ou adapter formal para S3/R2/B2/Wasabi.
+- Integracoes reais com Tiny, Mercado Livre e Shopee.
+- Emissao fiscal real e validacao com especialista fiscal.
+- Cold storage/exclusao fisica real fora do banco.
+- Sessao frontend mais segura que `localStorage`.
+- Observabilidade estruturada para jobs, worker e scheduler.
 ## Principios obrigatorios
 
 - Responder e documentar em portugues do Brasil.
@@ -62,9 +89,20 @@ Fluxo alvo:
 
 ## Prioridade 1 - Autorizacao por role
 
-Problema:
+Status: implementado para o MVP tecnico.
 
-- Hoje o app valida se o usuario pertence a empresa, mas nao aplica permissoes por role.
+Estado atual:
+
+- `CompanyService.require_company_role` valida empresa acessivel, membership ativo e role permitida.
+- Politicas centrais:
+  - `COMPANY_READER_ROLES`: `OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`.
+  - `COMPANY_OPERATOR_ROLES`: `OWNER`, `ADMIN`, `OPERATOR`.
+  - `COMPANY_ADMIN_ROLES`: `OWNER`, `ADMIN`.
+- Testes cobrem a matriz principal de permissao em `test_company_role_authorization.py`.
+
+Historico do problema:
+
+- Antes o app validava se o usuario pertencia a empresa, mas nao aplicava permissoes por role.
 - Roles existentes: `OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`.
 - Acoes sensiveis podem ser executadas por qualquer membro ativo.
 
@@ -104,7 +142,17 @@ Testes:
 
 ## Prioridade 2 - Storage fiscal local real
 
-Problema:
+Status: implementado para o MVP tecnico.
+
+Estado atual:
+
+- `LocalStorageProvider` salva, le e valida objetos em `.local-storage`.
+- `FiscalDocumentStorageService` calcula checksum SHA-256, salva bytes, valida integridade e persiste `StorageArchive`/`FiscalDocument`.
+- Emissao mockada bem-sucedida salva `NFE_XML` e `DANFE_PDF`.
+- API lista e baixa documentos fiscais por empresa.
+- Testes cobrem storage local, checksum, download e isolamento cross-tenant.
+
+Historico do problema:
 
 - O servico fiscal calcula checksum e tamanho, mas nao salva o conteudo.
 - O banco registra metadados como se o documento estivesse armazenado.
@@ -150,7 +198,16 @@ Testes:
 
 ## Prioridade 3 - Retencao por `retention_until`
 
-Problema:
+Status: implementado para o MVP tecnico.
+
+Estado atual:
+
+- `retention_until` e calculado ao armazenar documento a partir de `issued_at` ou fallback controlado.
+- `RetentionService` move archives para `COLD` e `DELETED` usando `retention_until`.
+- Rota manual `POST /api/v1/companies/{company_id}/retention/apply` exige `OWNER` ou `ADMIN`.
+- Testes cobrem idempotencia, datas antigas, documento recente e auditoria.
+
+Historico do problema:
 
 - A retencao usa `StorageArchive.created_at`.
 - Existe `retention_until`, mas ele ainda nao guia a politica.
@@ -182,7 +239,19 @@ Testes:
 
 ## Prioridade 4 - Auditoria forte
 
-Problema:
+Status: parcialmente implementado.
+
+Estado atual:
+
+- Emissao mockada registra eventos de lote, job e nota.
+- Retencao registra `previous_status`, `new_status`, `reason`, `cutoff`, `retention_until` e politica aplicada.
+- `AuditLogService` bloqueia metadata com chaves sensiveis.
+
+Pendente:
+
+- Expandir auditoria para mudancas sensiveis fora de emissao e retencao, como usuarios, integracoes e credenciais.
+
+Historico do problema:
 
 - Auditoria existe, mas alguns eventos tem pouco contexto.
 - Retencao precisa ser rastreavel.
@@ -211,7 +280,19 @@ Testes:
 
 ## Prioridade 5 - Scheduler e jobs reais
 
-Problema:
+Status: parcialmente implementado.
+
+Estado atual:
+
+- Worker Celery tem `health.ping` e `emissions.process_mock_batch`.
+- Scheduler roda retencao a cada 5 minutos em `America/Sao_Paulo`.
+- `retention_jobs` registra execucao, conclusao e falha do ciclo.
+
+Pendente:
+
+- Retry operacional mais completo e rastreabilidade final para integracoes reais, emissao real e sincronizacoes futuras.
+
+Historico do problema:
 
 - O projeto ja tem `worker` e `scheduler`.
 - Scheduler ainda e heartbeat.
@@ -252,7 +333,18 @@ Objetivo:
 
 ## Prioridade 7 - Polimento para demo
 
-Problema:
+Status: em andamento.
+
+Estado atual:
+
+- Frontend possui telas protegidas para dashboard, empresas, integracoes, devolucoes, emissoes, documentos e historico.
+- Tela `/app/documents` lista e baixa XML/DANFE mockados.
+
+Pendente:
+
+- Melhorar estados de loading, vazio, erro e progresso de jobs conforme o fluxo amadurecer.
+
+Historico do problema:
 
 - Algumas telas ainda usam termos de sessao/mock.
 - Estados de loading, vazio e erro ainda parecem prototipo.
@@ -267,13 +359,14 @@ Melhorias:
 
 ## Ordem recomendada
 
-1. Autorizacao por role.
-2. Storage fiscal local real.
-3. Retencao por `retention_until`.
-4. Auditoria mais completa.
-5. Scheduler com tarefas reais.
-6. Seguranca de sessao.
-7. Polimento frontend.
+1. Formalizar adapter de storage externo mantendo `LocalStorageProvider` para desenvolvimento.
+2. Expandir auditoria para usuarios, integracoes e credenciais.
+3. Melhorar observabilidade e retry de jobs.
+4. Evoluir endpoints de listagem de devolucoes/notas para melhorar frontend.
+5. Migrar sessao frontend para estrategia segura.
+6. Preparar integracoes reais com Tiny, Mercado Livre e Shopee.
+7. Evoluir emissao real somente apos validacao fiscal.
+8. Polimento frontend para demo.
 
 ## Pronto para demo tecnica
 
@@ -282,6 +375,8 @@ Melhorias:
 - Checksum pode ser verificado.
 - Retencao usa `retention_until`.
 - Auditoria mostra eventos importantes sem dados sensiveis.
+- Scheduler registra ciclos de retencao em `retention_jobs`.
+- Frontend permite baixar documentos fiscais mockados.
 - Testes, lint e build passam.
 - Docker Compose sobe sem erro.
 - Fluxo basico funciona em `localhost:3000/app`.
@@ -294,6 +389,7 @@ Melhorias:
 - Sessao frontend com estrategia segura.
 - Jobs com retry e rastreabilidade.
 - Logs sem informacao sensivel.
+- Integracoes reais validadas com time fiscal/operacional.
 - Ambientes separados para dev, staging e producao.
 - Health checks uteis para API, banco, Redis e worker.
 - README atualizado com setup e fluxo de uso.

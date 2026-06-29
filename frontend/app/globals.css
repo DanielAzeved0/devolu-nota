@@ -311,6 +311,11 @@ h1 {
   grid-template-columns: 1fr 210px 90px;
 }
 
+.documentRow {
+  grid-template-columns: minmax(0, 1.2fr) 160px minmax(0, 1fr) 110px;
+  align-items: center;
+}
+
 .summaryGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -519,6 +524,10 @@ h1 {
   }
 
   .row {
+    grid-template-columns: 1fr;
+  }
+
+  .documentRow {
     grid-template-columns: 1fr;
   }
 

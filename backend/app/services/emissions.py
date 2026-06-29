@@ -6,7 +6,8 @@ from app.repositories.audit_logs import AuditLogRepository
 from app.repositories.emissions import EmissionRepository
 from app.schemas.emissions import EmissionBatchMockCreateRequest, MockEmissionScenario
 from app.services.audit_logs import AuditLogService
-from app.services.companies import COMPANY_OPERATOR_ROLES, CompanyService
+from app.services.companies import COMPANY_OPERATOR_ROLES, COMPANY_READER_ROLES, CompanyService
+from app.services.fiscal_documents import FiscalDocumentStorageService
 
 ELIGIBLE_RETURN_NOTE_STATUSES = ("DRAFT", "READY_TO_EMIT")
 FINAL_BATCH_STATUSES = ("COMPLETED", "FAILED", "CANCELLED")
@@ -161,7 +162,11 @@ class EmissionBatchMockService:
         batch_id: UUID,
         current_user: User,
     ) -> EmissionBatch:
-        await self.companies.get_company(company_id=company_id, current_user=current_user)
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_READER_ROLES,
+        )
         batch = await self.emissions.get_batch_by_company_id(
             company_id=company_id,
             batch_id=batch_id,
@@ -187,9 +192,11 @@ class EmissionBatchMockProcessor:
         *,
         emissions: EmissionRepository,
         audit_logs: AuditLogRepository | None = None,
+        fiscal_documents: FiscalDocumentStorageService | None = None,
     ) -> None:
         self.emissions = emissions
         self.audit_logs = AuditLogService(audit_logs=audit_logs) if audit_logs is not None else None
+        self.fiscal_documents = fiscal_documents
 
     async def process_batch(
         self,
@@ -299,6 +306,12 @@ class EmissionBatchMockProcessor:
             return_note.return_nfe_key = build_mock_return_nfe_key(return_note.id)
             return_note.issued_at = job.finished_at
             return_note.error_message = None
+            await self._store_mock_fiscal_documents(
+                company_id=company_id,
+                return_note_id=return_note.id,
+                access_key=return_note.return_nfe_key,
+                issued_at=return_note.issued_at,
+            )
             await self._audit(
                 company_id=company_id,
                 action="EMISSION_JOB_SUCCEEDED",
@@ -339,6 +352,44 @@ class EmissionBatchMockProcessor:
         )
         return batch
 
+    async def _store_mock_fiscal_documents(
+        self,
+        *,
+        company_id: UUID,
+        return_note_id: UUID,
+        access_key: str,
+        issued_at: datetime,
+    ) -> None:
+        if self.fiscal_documents is None:
+            return
+
+        xml_content = build_mock_nfe_xml(
+            return_note_id=return_note_id,
+            access_key=access_key,
+        )
+        pdf_content = build_mock_danfe_pdf(
+            return_note_id=return_note_id,
+            access_key=access_key,
+        )
+        await self.fiscal_documents.store_document(
+            company_id=company_id,
+            return_note_id=return_note_id,
+            document_type="NFE_XML",
+            content_bytes=xml_content,
+            content_type="application/xml",
+            access_key=access_key,
+            issued_at=issued_at,
+        )
+        await self.fiscal_documents.store_document(
+            company_id=company_id,
+            return_note_id=return_note_id,
+            document_type="DANFE_PDF",
+            content_bytes=pdf_content,
+            content_type="application/pdf",
+            access_key=access_key,
+            issued_at=issued_at,
+        )
+
     async def _audit(
         self,
         *,
@@ -371,6 +422,26 @@ def should_fail_job(*, scenario: MockEmissionScenario, index: int) -> bool:
 def build_mock_return_nfe_key(return_note_id: UUID) -> str:
     digits = "".join(str(int(char, 16)) for char in return_note_id.hex)
     return digits[:44].ljust(44, "0")
+
+
+def build_mock_nfe_xml(*, return_note_id: UUID, access_key: str) -> bytes:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<nfeMock>"
+        f"<returnNoteId>{return_note_id}</returnNoteId>"
+        f"<accessKey>{access_key}</accessKey>"
+        "</nfeMock>"
+    ).encode()
+
+
+def build_mock_danfe_pdf(*, return_note_id: UUID, access_key: str) -> bytes:
+    return (
+        "%PDF-1.4\n"
+        "% Mock DANFE gerado para desenvolvimento local\n"
+        f"ReturnNoteId: {return_note_id}\n"
+        f"AccessKey: {access_key}\n"
+        "%%EOF\n"
+    ).encode()
 
 
 def utcnow() -> datetime:

@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app.models import User
 from app.repositories.retention import RetentionRepository
-from app.services.fiscal_documents import add_years
 from app.services.audit_logs import AuditLogService
+from app.services.companies import COMPANY_ADMIN_ROLES, CompanyService
+from app.services.fiscal_documents import add_years
 
 
 class RetentionPolicyError(ValueError):
@@ -35,12 +37,30 @@ class RetentionService:
         self,
         *,
         retention: RetentionRepository,
+        companies: CompanyService | None = None,
         audit_logs: AuditLogService | None = None,
         policy: RetentionPolicy | None = None,
     ) -> None:
         self.retention = retention
+        self.companies = companies
         self.audit_logs = audit_logs
         self.policy = policy or RetentionPolicy()
+
+    async def apply_company_retention_for_user(
+        self,
+        *,
+        company_id: UUID,
+        current_user: User,
+        now: datetime | None = None,
+    ) -> RetentionResult:
+        if self.companies is None:
+            raise RuntimeError("CompanyService is required to apply retention for a user")
+        await self.companies.require_company_role(
+            company_id=company_id,
+            current_user=current_user,
+            allowed_roles=COMPANY_ADMIN_ROLES,
+        )
+        return await self.apply_company_retention(company_id=company_id, now=now)
 
     async def apply_company_retention(
         self,
